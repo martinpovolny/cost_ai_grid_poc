@@ -390,21 +390,7 @@ Provider-defined resource limits per tenant (and optionally per project).
 
 ### `alerts`
 
-Records of quota threshold breaches. Emitted back to OSAC via CloudEvent.
-
-| Column | Type | Description |
-|---|---|---|
-| `id` | `UUID` PK | |
-| `quota_id` | `UUID` FK → `quotas` | Which quota was breached |
-| `tenant_id` | `UUID` FK → `tenants` | |
-| `threshold_pct` | `NUMERIC` | Trigger threshold (e.g. `70.0`, `90.0`, `100.0`) |
-| `consumed_value` | `NUMERIC` | Actual consumption at trigger time |
-| `limit_value` | `NUMERIC` | Quota limit at trigger time |
-| `state` | `TEXT` | `firing`, `acknowledged`, `resolved` |
-| `triggered_at` | `TIMESTAMPTZ` | When alert was first generated |
-| `acknowledged_at` | `TIMESTAMPTZ` | Nullable |
-
----
+TBD
 
 ## Data Flow Through the Model
 

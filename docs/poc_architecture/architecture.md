@@ -243,9 +243,9 @@ quota_consumption > threshold (e.g. 70%)
 | 1 | What transport will OSAC use to send CloudEvents to Cost? | OSAC + Cost | **PoC decided:** Watch stream (Option A). Production Kafka only if multi-consumer fan-out is needed — see ADR-002 |
 | 2 | What Kafka topic names will OSAC use? | OSAC | Open — relevant only if Option C is adopted |
 | 3 | Will OSAC define CloudEvents for MaaS and BMaaS? | OSAC | Open |
-| 4 | Where do quotas/budgets live — OSAC, Cost, or both? | OSAC + Cost | Open |
+| 4 | Where do quotas/budgets live — OSAC, Cost, or both? | OSAC + Cost | **Decided:** OSAC owns limits; Cost caches via List API — see [alerting/alerting-osac-integration.md](alerting/alerting-osac-integration.md) |
 | 5 | Where do cost tiers live — OSAC, Cost, or both? | OSAC + Cost | Open |
-| 6 | How will quota alerts be communicated to OSAC? (Kafka CloudEvents? HTTP callback?) | OSAC + Cost | Open |
+| 6 | How will quota alerts be communicated to OSAC? (Kafka CloudEvents? HTTP callback?) | OSAC + Cost | **Leaning toward:** push + pull — see [alerting/alerting-osac-integration.md](boundary_monitoring/alerting-osac-integration.md); wire formats in [alerting/alerting-spec-draft.md](boundary_monitoring/alerting-spec-draft.md) |
 | 7 | Does OSAC have a concept of projects within tenants that Cost needs to track? | OSAC + Cost | **Resolved:** yes — `projects` table populated; see REQ-3a |
 | 8 | UI requirements for the data grid? | Cost | TBD |
 
@@ -261,3 +261,5 @@ quota_consumption > threshold (e.g. 70%)
 - [docs/requirements/ai_grid_poc_requirements_brief.md](../requirements/ai_grid_poc_requirements_brief.md) — requirements spike
 - [ADR-001: Metering sweep interval](../decisions/001-metering-sweep-interval.md)
 - [ADR-002: Watch stream instead of Kafka](../decisions/002-arguments-against-kafka.md)
+- [alerting/alerting-osac-integration.md](alerting/alerting-osac-integration.md) — quota integration options & ownership (REQ-9, REQ-10)
+- [alerting/alerting-spec-draft.md](alerting/alerting-spec-draft.md) — API/schema draft (after route chosen)
