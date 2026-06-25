@@ -48,6 +48,21 @@ type ClusterRecord struct {
 	LastMeteredAt *time.Time      `json:"last_metered_at"`
 }
 
+type ModelRecord struct {
+	ModelID     string          `json:"model_id"`
+	Name        string          `json:"name"`
+	ModelName   string          `json:"model_name"`
+	Tenant      string          `json:"tenant"`
+	Project     string          `json:"project"`
+	Template    string          `json:"template"`
+	State       string          `json:"state"`
+	Labels      json.RawMessage `json:"labels"`
+	CreatedAt   time.Time       `json:"created_at"`
+	DeletedAt   *time.Time      `json:"deleted_at"`
+	LastEventID string          `json:"last_event_id"`
+	LastUpdated time.Time       `json:"last_updated"`
+}
+
 type InstanceTypeRecord struct {
 	InstanceTypeID string    `json:"instance_type_id"`
 	Name           string    `json:"name"`

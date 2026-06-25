@@ -94,6 +94,24 @@ CREATE TABLE IF NOT EXISTS inventory_cluster (
 
 CREATE INDEX IF NOT EXISTS idx_cl_alive ON inventory_cluster (deleted_at) WHERE deleted_at IS NULL;
 
+CREATE TABLE IF NOT EXISTS inventory_model (
+    model_id       TEXT PRIMARY KEY,
+    name           TEXT NOT NULL DEFAULT '',
+    model_name     TEXT NOT NULL DEFAULT '',
+    tenant         TEXT NOT NULL DEFAULT '',
+    project        TEXT NOT NULL DEFAULT '',
+    template       TEXT NOT NULL DEFAULT '',
+    state          TEXT NOT NULL DEFAULT '',
+    labels         JSONB DEFAULT '{}'::jsonb,
+    created_at     TIMESTAMPTZ NOT NULL,
+    deleted_at     TIMESTAMPTZ,
+    last_event_id  TEXT NOT NULL DEFAULT '',
+    last_updated   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_alive ON inventory_model (deleted_at) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_model_tenant ON inventory_model (tenant);
+
 CREATE TABLE IF NOT EXISTS inventory_instance_type (
     instance_type_id TEXT PRIMARY KEY,
     name             TEXT NOT NULL DEFAULT '',
@@ -251,6 +269,55 @@ func (s *Store) BillableClusters(ctx context.Context) ([]ClusterRecord, error) {
 		results = append(results, r)
 	}
 	return results, rows.Err()
+}
+
+// UpsertModel inserts or updates a model deployment in the inventory.
+func (s *Store) UpsertModel(ctx context.Context, rec ModelRecord) error {
+	labelsJSON, err := marshalLabels(rec.Labels)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO inventory_model
+			(model_id, name, model_name, tenant, project, template, state, labels, created_at, deleted_at, last_event_id, last_updated)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+		ON CONFLICT (model_id) DO UPDATE SET
+			name = EXCLUDED.name,
+			model_name = EXCLUDED.model_name,
+			tenant = EXCLUDED.tenant,
+			project = EXCLUDED.project,
+			template = EXCLUDED.template,
+			state = EXCLUDED.state,
+			labels = EXCLUDED.labels,
+			deleted_at = EXCLUDED.deleted_at,
+			last_event_id = EXCLUDED.last_event_id,
+			last_updated = NOW()
+	`, rec.ModelID, rec.Name, rec.ModelName, rec.Tenant, rec.Project,
+		rec.Template, rec.State, labelsJSON, rec.CreatedAt, rec.DeletedAt, rec.LastEventID)
+
+	if err != nil {
+		return fmt.Errorf("upsert model %s: %w", rec.ModelID, err)
+	}
+
+	s.logger.Debug("upserted model", "id", rec.ModelID, "model_name", rec.ModelName, "state", rec.State)
+	return nil
+}
+
+// MarkModelDeleted sets the deleted_at timestamp on a model.
+func (s *Store) MarkModelDeleted(ctx context.Context, modelID string, deletedAt time.Time, eventID string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE inventory_model
+		SET deleted_at = $2, last_event_id = $3, last_updated = NOW()
+		WHERE model_id = $1 AND deleted_at IS NULL
+	`, modelID, deletedAt, eventID)
+
+	if err != nil {
+		return fmt.Errorf("mark model deleted %s: %w", modelID, err)
+	}
+
+	s.logger.Debug("marked model deleted", "id", modelID)
+	return nil
 }
 
 // UpdateClusterLastMetered sets last_metered_at for a cluster.
