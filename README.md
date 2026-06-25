@@ -56,7 +56,7 @@ INVENTORY_DB_URL=postgres://user:pass@localhost:5434/costdb \
 ./inventory-watcher
 ```
 
-See [docs/local-dev-setup.md](docs/local-dev-setup.md) for full setup instructions.
+See [docs/local-dev-setup.md](docs/dev/local-dev-setup.md) for full setup instructions.
 
 
 ## License

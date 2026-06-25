@@ -5,7 +5,7 @@
 
 ---
 
-## 1. Background
+## Background
 
 The **AI Grid** is a sovereign cloud offering for customers, built on the Red Hat portfolio (OpenShift Container Platform, OpenShift Virtualization, OpenShift AI, Advanced Cluster Manager, Ansible Automation Platform).
 
@@ -22,7 +22,7 @@ This POC explores that integration from the Cost Management side.
 
 ---
 
-## 2. System Context
+## System Context
 
 ```mermaid
 flowchart TB
@@ -42,28 +42,24 @@ flowchart TB
     end
 
     subgraph poc [Cost AI Grid POC]
-        consumer["Event Consumer\n(Python)"]
+        watcher["inventory-watcher\n(Go)"]
         koku_db["PostgreSQL\n(POC)"]
-        koku_api["Cost API\n(FastAPI)"]
+        koku_api["Cost API\n(FastAPI — planned)"]
         ui["Data Grid UI\n(TBD)"]
-        consumer --> koku_db
+        watcher --> koku_db
         koku_db --> koku_api
         koku_api --> ui
     end
 
-    subgraph transport [Event Transport — TBD]
-        kafka["Kafka\n(likely)"]
-    end
-
     ai_grid -->|"provisions / manages"| osac_sys
-    osac_ctrl -->|"CloudEvents"| kafka
-    kafka -->|"consumes"| consumer
-    koku_api -->|"quota alerts"| kafka
+    osac_api -->|"Watch stream\n(NDJSON)"| watcher
+    osac_api -->|"List endpoints\n(reconciler)"| watcher
+    koku_api -.->|"quota alerts\n(TBD transport)"| osac_api
 ```
 
 ---
 
-## 3. Local Development Service Map
+## Local Development Service Map
 
 When running the full stack locally, services are assigned ports to avoid conflicts between Koku and OSAC:
 
@@ -77,13 +73,14 @@ When running the full stack locally, services are assigned ports to avoid confli
 | OSAC metrics | 8012 | |
 | OSAC OIDC server | 8013 | Local JWT signing |
 | OSAC PostgreSQL | 5433 | |
-| **POC Kafka** | **9092** | docker-compose |
+| **inventory-watcher** | — | Go binary; connects to OSAC REST `:8011` |
 | **POC PostgreSQL** | **5434** | docker-compose |
-| **POC FastAPI** | **8020** | This POC |
+| **POC FastAPI** | **8020** | Planned REST API |
+| POC Kafka | 9092 | Optional — only needed for Option C |
 
 ---
 
-## 4. OSAC Resource Model
+## OSAC Resource Model
 
 OSAC organizes resources in a hierarchy:
 
@@ -104,27 +101,30 @@ The OSAC fulfillment service exposes these via gRPC (`osac.public.v1`) with a RE
 | `osac.public.v1.ClusterTemplates` | `GET /api/fulfillment/v1/cluster_templates` |
 | `osac.public.v1.Clusters` | `GET /api/fulfillment/v1/clusters` |
 | `osac.public.v1.ClusterOrders` | `GET /api/fulfillment/v1/cluster_orders` |
-| `osac.public.v1.Events` | gRPC streaming watch API |
+| `osac.public.v1.Events` | `GET /api/private/v1/events/watch` (NDJSON stream via REST gateway) |
 
 ---
 
-## 5. Event Ingestion — Options
+## Event Ingestion — Options
 
-The OSAC fulfillment service currently exposes a gRPC streaming `Events` service and a REST polling API. The production target is native CloudEvents over Kafka. Three ingestion options are viable for the POC:
+The OSAC fulfillment service exposes a gRPC streaming `Events` service (with a REST gateway watch endpoint) and REST List APIs for inventory. Three ingestion options are viable for the POC. **Option A is the current implementation** — see [ADR-002](../decisions/002-arguments-against-kafka.md) for why Kafka is deferred.
 
-### Option A — gRPC Watch (simplest for POC)
+### Option A — Watch Stream (PoC default)
+
+The underlying transport is `osac.public.v1.Events` (gRPC streaming watch). The PoC consumes it via the REST gateway NDJSON endpoint using the Go `inventory-watcher` service, with a periodic reconciler against List endpoints.
 
 ```mermaid
 flowchart LR
-    osac["OSAC gRPC\nlocalhost:8010"]
-    consumer["Python Consumer\n(grpcio)"]
-    db["POC PostgreSQL"]
-    osac -->|"osac.public.v1.Events\n(streaming watch)"| consumer
+    osac["OSAC REST gateway\nlocalhost:8011"]
+    consumer["inventory-watcher\n(Go)"]
+    db["POC PostgreSQL\n:5434"]
+    osac -->|"GET /api/private/v1/events/watch\n(NDJSON stream)"| consumer
+    osac -->|"GET /clusters, /compute_instances\n(reconciler)"| consumer
     consumer --> db
 ```
 
-**Pros:** No additional infrastructure, works today against local OSAC.
-**Cons:** Tightly coupled to gRPC; not the production target; requires TLS cert + JWT auth.
+**Pros:** Real-time events; no additional infrastructure; works today against local OSAC; reconciler catches missed events.
+**Cons:** Single-consumer pattern; requires JWT auth against OSAC; not suitable if multiple independent consumers need the same event stream.
 
 ### Option B — REST Polling (fallback)
 
@@ -140,29 +140,31 @@ flowchart LR
 **Pros:** Simple; matches the existing CaaS/VMaaS collector scripts.
 **Cons:** Snapshot-based; misses events between polls; 60s granularity.
 
-### Option C — Kafka (production target)
+### Option C — Kafka (optional future)
 
 ```mermaid
 flowchart LR
     ctrl["OSAC Controllers"]
     kafka["Kafka\nlocalhost:9092"]
-    consumer["Python Consumer\n(confluent-kafka)"]
+    consumer["Event Consumer"]
     db["POC PostgreSQL"]
     ctrl -->|"CloudEvents\nosac.events.*"| kafka
     kafka --> consumer
     consumer --> db
 ```
 
-**Pros:** Decoupled; matches production architecture; supports all event types.
-**Cons:** Requires OSAC to publish to Kafka (not fully implemented on OSAC side yet); needs Kafka running locally.
+**Pros:** Decoupled fan-out; supports multiple independent consumers; event replay over long windows.
+**Cons:** Requires OSAC to publish to Kafka (not implemented on OSAC side yet); adds operational overhead with no current multi-consumer requirement.
 
 ### Recommendation
 
-Start with **Option B** (REST polling) to unblock POC development while OSAC and Cost agree on the Kafka transport. Implement **Option C** once the Kafka topic schema is agreed. Keep the consumer logic behind an interface so the transport layer is swappable.
+Use **Option A** (Watch stream + reconciler) for the PoC and likely for production v1 — see [ADR-002](../decisions/002-arguments-against-kafka.md). The 60-second metering sweep interval is fixed by [ADR-001](../decisions/001-metering-sweep-interval.md).
+
+Adopt **Option C** only if multiple independent consumers emerge or OSAC standardizes on Kafka as a first-class transport. Keep event ingestion behind an interface (`internal/osac/client.go` today) so the transport layer is swappable without changing the metering pipeline.
 
 ---
 
-## 6. Metering Model
+## Metering Model
 
 Cost Management must support three billing models:
 
@@ -189,113 +191,73 @@ Charge is based on actual usage:
 
 ---
 
-## 7. Data Flow
+## Data Flow
 
 ### Inventory Sync
 
+The reconciler periodically diffs OSAC List endpoints against local inventory to catch events missed by the Watch stream:
+
 ```
-OSAC REST API
+OSAC REST API (reconciler, periodic)
   GET /cluster_templates  →  populate cluster_templates table
   GET /clusters           →  populate clusters table
   GET /cluster_orders     →  populate cluster_orders table
-  (repeated on each event or on schedule)
+  GET /compute_instances  →  populate compute_instances table
 ```
 
 ### Metering Pipeline
 
 ```
-CloudEvent received (Kafka or gRPC or REST poll)
+OSAC Watch stream event (or Reconciler List diff)
   │
-  ├── validate & parse (Pydantic model)
-  ├── persist raw event → events table
-  ├── update resource state → clusters / compute_instances table
-  ├── calculate metering increment → metering_entries table
-  └── evaluate quota thresholds → if breached → emit alert
+  ├── validate & parse CloudEvent (Go structs)
+  ├── INSERT raw_events (dedup on ce_id)
+  ├── UPSERT inventory → clusters / compute_instances / models
+  │
+  └── [60s sweep] if billable state → INSERT metering_entries
+        ↓
+      [planned] rate lookup → cost_entries
+        ↓
+      [planned] quota check → alerts → OSAC
 ```
 
 ### Alert Flow
 
+Alert transport back to OSAC is not yet decided. A likely shape:
+
 ```
 quota_consumption > threshold (e.g. 70%)
   │
-  └── emit CloudEvent → Kafka topic: osac.alerts.quota
+  └── emit alert (transport TBD: Kafka CloudEvent, HTTP webhook, etc.)
         │
         └── OSAC receives alert → applies OPA rate limit policy
 ```
 
 ---
 
-## 8. Component Architecture (POC)
 
-```
-cost_ai_grid_poc/
-├── docker-compose.yml        # Kafka (KRaft) + POC PostgreSQL
-├── pyproject.toml            # uv-managed Python deps
-├── .env.example              # config template
-│
-├── consumer/                 # Event ingestion layer
-│   ├── main.py               # entry point: Kafka consumer or REST poller
-│   ├── models.py             # Pydantic CloudEvent models
-│   ├── transport/
-│   │   ├── kafka_consumer.py # Option C: Kafka
-│   │   ├── grpc_watcher.py   # Option A: gRPC stream
-│   │   └── rest_poller.py    # Option B: REST poll
-│   └── handlers/
-│       ├── inventory.py      # sync clusters/VMs into DB
-│       ├── metering.py       # calculate metering entries
-│       ├── cost_tracker.py   # apply rates → cost entries
-│       └── alerting.py       # evaluate quotas → emit alerts
-│
-└── api/                      # FastAPI REST API
-    ├── main.py
-    └── routers/
-        ├── events.py         # GET /events
-        ├── inventory.py      # GET /clusters, /vms, /models
-        ├── costs.py          # GET /costs, /metering
-        ├── reports.py        # GET /reports
-        └── quotas.py         # GET/POST /quotas, /budgets
-```
-
----
-
-## 9. Technology Stack
-
-| Layer | Choice | Rationale |
-|---|---|---|
-| Language | Python | Koku is Python; reuse patterns and team knowledge |
-| Event format | CloudEvents 1.0 | OSAC standard; spec-driven |
-| Event transport | Kafka (KRaft, no Zookeeper) | Production target; decoupled |
-| Storage | PostgreSQL | Matches OSAC and Koku; team familiarity |
-| API | FastAPI | Async, built-in OpenAPI docs |
-| ORM | SQLAlchemy + Alembic | Standard in Koku ecosystem |
-| Kafka client | confluent-kafka | Most production-ready Python Kafka client |
-| gRPC client | grpcio + grpcio-tools | For Option A / direct gRPC watch |
-| HTTP client | httpx | Async; for REST polling and OSAC API calls |
-| Package mgmt | uv + pyproject.toml | Modern, fast; matches fulfillment-service style |
-| Auth | PyJWT + cryptography | Mint JWTs from local `server.key` for OSAC API |
-
----
-
-## 10. Open Questions
+## Open Questions
 
 | # | Question | Owner | Status |
 |---|---|---|---|
-| 1 | What transport will OSAC use to send CloudEvents to Cost? (Kafka? HTTP?) | OSAC + Cost | Open |
-| 2 | What Kafka topic names will OSAC use? | OSAC | Open |
+| 1 | What transport will OSAC use to send CloudEvents to Cost? | OSAC + Cost | **PoC decided:** Watch stream (Option A). Production Kafka only if multi-consumer fan-out is needed — see ADR-002 |
+| 2 | What Kafka topic names will OSAC use? | OSAC | Open — relevant only if Option C is adopted |
 | 3 | Will OSAC define CloudEvents for MaaS and BMaaS? | OSAC | Open |
 | 4 | Where do quotas/budgets live — OSAC, Cost, or both? | OSAC + Cost | Open |
 | 5 | Where do cost tiers live — OSAC, Cost, or both? | OSAC + Cost | Open |
 | 6 | How will quota alerts be communicated to OSAC? (Kafka CloudEvents? HTTP callback?) | OSAC + Cost | Open |
-| 7 | Does OSAC have a concept of projects within tenants that Cost needs to track? | OSAC + Cost | Open |
+| 7 | Does OSAC have a concept of projects within tenants that Cost needs to track? | OSAC + Cost | **Resolved:** yes — `projects` table populated; see REQ-3a |
 | 8 | UI requirements for the data grid? | Cost | TBD |
 
 ---
 
-## 11. References
+## References
 
 - [OSAC Project GitHub](https://github.com/osac-project)
 - [OSAC Fulfillment Service](https://github.com/osac-project/fulfillment-service)
 - [OSAC Metering Discover POC](https://github.com/masayag/osac-metering-discover-poc)
 - [OSAC Console Mockups](https://heyethankim.github.io/osac-demo/)
-- [docs/development/fullfillment_service_setup.md](../development/fullfillment_service_setup.md) — local dev setup guide
+- [docs/dev/local-dev-setup.md](../dev/local-dev-setup.md) — local dev setup guide
 - [docs/requirements/ai_grid_poc_requirements_brief.md](../requirements/ai_grid_poc_requirements_brief.md) — requirements spike
+- [ADR-001: Metering sweep interval](../decisions/001-metering-sweep-interval.md)
+- [ADR-002: Watch stream instead of Kafka](../decisions/002-arguments-against-kafka.md)

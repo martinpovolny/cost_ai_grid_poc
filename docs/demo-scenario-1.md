@@ -15,7 +15,7 @@ brew install watch        # live-refresh terminal commands
 brew install asciinema    # terminal recording (optional)
 ```
 
-Everything else should already be set up per `docs/local-dev-setup.md`.
+Everything else should already be set up per `docs/dev/local-dev-setup.md`.
 
 ## Demo Flow
 
