@@ -1,46 +1,58 @@
 # Cost AI Grid PoC
 
-Proof-of-concept for cost management integrated with OSAC fulfillment-service.
+Proof-of-concept cost management system integrated with
+[OSAC](https://github.com/osac-project/fulfillment-service) for the
+AI Grid sovereign cloud. Tracks infrastructure and AI model costs via
+real-time event ingestion, capacity-based and consumption-based metering,
+and tiered pricing.
 
-## Structure
+**Deadline:** July 31, 2026
 
-```
-docs/                          Design documents and analysis
-  thoughts.md                  Architecture exploration and consumer design
-  cost-reports-feasibility.md  What cost reports are feasible with OSAC data
-  local-dev-setup.md           How to run everything locally
+## Start Here
 
-snippets/                      Reusable scripts and curl commands
-  create-test-data.sh          Populate OSAC with test compute instances
+**[docs/index.md](docs/index.md)** — technical guide with links to
+architecture, data model, API reference, requirements status, demos,
+and code map.
 
-inventory-watcher/             Go service: watches OSAC events, builds cost inventory
-  cmd/consumer/                Entry point
-  internal/watcher/            Real-time OSAC event stream consumer
-  internal/reconciler/         Periodic full-state reconciliation
-  internal/summarizer/         Duration-based usage calculation
-  internal/inventory/          PostgreSQL inventory store
-  internal/osac/               OSAC REST API client and types
-  scripts/                     OIDC server, token generator, setup script
-```
-
-## Inventory Watcher
-
-A Go service that connects to the OSAC fulfillment-service and maintains a cost
-inventory database:
-
-- **Watches** OSAC events in real-time (CREATED/UPDATED/DELETED for compute
-  instances, clusters, instance types)
-- **Reconciles** periodically against OSAC List endpoints to catch missed events
-- **Summarizes** resource durations into daily usage (CPU-core-hours, memory-GB-hours)
+## Quick Start
 
 ```bash
+# Build
 cd inventory-watcher
 go build -o inventory-watcher ./cmd/consumer/
+go build -o maas-simulator ./cmd/maas-simulator/
 
+# Run (requires OSAC + PostgreSQL — see docs/local-dev-setup.md)
 OSAC_BASE_URL=http://localhost:8011 \
 OSAC_TOKEN=$(cat /tmp/osac_token.txt) \
 INVENTORY_DB_URL=postgres://user:pass@localhost:5434/costdb \
+INGEST_LISTEN_ADDR=localhost:8020 \
 ./inventory-watcher
+
+# Demo data (VMs + MaaS events + cost entries)
+bash snippets/setup-demo-data.sh
+
+# Tests (27 assertions)
+bash snippets/test-inventory-watcher.sh
 ```
 
-See [docs/local-dev-setup.md](docs/local-dev-setup.md) for full setup instructions.
+## Documentation
+
+| Document | Description |
+|---|---|
+| [Technical Guide](docs/index.md) | Entry point — start here |
+| [Data Model](docs/data-model.md) | ERD diagrams, all 11 tables, Go model links |
+| [gRPC Messages](docs/grpc-messages-catalog.md) | OSAC proto messages consumed |
+| [API Reference](docs/api-reference.md) | HTTP endpoints exposed |
+| [Implementation Status](docs/implementation-status.md) | Requirements vs code, cross-linked |
+| [Local Dev Setup](docs/local-dev-setup.md) | How to run everything |
+
+## Architecture
+
+```
+OSAC Watch stream → raw_events → inventory → metering (60s) → cost (30s)
+                                                                  ↓
+MaaS ingest endpoint → raw_events → inventory_model → metering → cost
+                                                                  ↓
+                                                         quota status API
+```
