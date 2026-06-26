@@ -133,15 +133,13 @@ it just needs: resource_type, resource_id, tenant_id, and meter values.
 
 ### What we explicitly defer:
 
-- **Rate calculation** — computing cost from metering entries (req #6, not #2).
-  The rate structure ($/million tokens) is defined but rate lookup and tiered
-  pricing are a separate requirement.
-
 - **RHOAI integration** — we won't connect to a real RHOAI instance.
   We'll use the proposed event schema with mock data.
 
-- **60-second SLA** — already met by the existing pipeline architecture.
-  Events are processed synchronously as they arrive.
+- **Per-model rate differentiation** — the rate engine supports per-tenant
+  overrides, but per-model rates (e.g., llama-3-70b costs more than
+  llama-3-8b) would need rate lookup by `model_name` in addition to
+  `meter_name`. Straightforward to add when needed.
 
 ## Implementation Progress
 
@@ -173,14 +171,27 @@ it just needs: resource_type, resource_id, tenant_id, and meter values.
    A sovereign cloud with 100 models × 10 req/s = ~17 metering events/second
    at 60-second collection intervals. Pipeline handles 100x that.
 
-### Remaining Gaps
+6. **Rate engine** — rates table with flat and tiered pricing, automatic
+   rating sweep every 30s. Default MaaS rates seeded on startup:
+   $0.50/M input tokens, $1.50/M output tokens, $1.00/M inference tokens,
+   $5.00/M requests. Metering entries are automatically converted to cost
+   entries with dollar amounts. See
+   [rating-engine-options.md](research/rating-engine-options.md) for the
+   research on engine alternatives.
+
+7. **Demo data setup** — `snippets/setup-demo-data.sh` creates 8 production
+   and staging VMs, fires 500 MaaS events, and waits for metering + rating
+   to produce full cost entries for both infra and MaaS.
+
+### Remaining Gaps (blocked on OSAC)
 
 | Capability | Status | Notes |
 |---|---|---|
 | MaaS CloudEvents schema | **Proposed only** | Not confirmed by OSAC — see open questions above |
 | OSAC Model entity | **Does not exist** | No proto, no API, no Watch stream events |
-| Rate structure | **Defined, not implemented** | $/million tokens — rate engine is req #6 |
 | RHOAI metric collection | **Unresolved** | Who collects: OSAC or Cost? |
+| Tiered pricing for MaaS | **Supported, not configured** | Engine supports tiers; no tier definitions created yet |
+| Per-model rate overrides | **Supported, not configured** | Rates can be set per tenant; per-model requires rate lookup by model_name (future) |
 
 ## Coverage vs Gaps
 
@@ -189,10 +200,11 @@ it just needs: resource_type, resource_id, tenant_id, and meter values.
 | Model inventory tracking | Yes | **Done** | `inventory_model` table |
 | MaaS event ingestion | Yes | **Done (mock)** | Ingest endpoint + simulator; blocked on real OSAC events |
 | Token/request metering | Yes | **Done** | 4 meters, consumption-based |
-| Rate structure definition | Yes | **Documented** | $/million tokens for in/out/inference/requests |
-| Cost computation within 60s | Yes | **Met** | <1ms per event at 1700 events/s |
+| Rate engine | Yes | **Done** | Flat + tiered pricing, default rates seeded, 30s rating sweep |
+| Cost computation within 60s | Yes | **Met** | <1ms per event at 1700 events/s; rated within 30s |
 | MaaS CloudEvents schema | Yes | **Proposed only** | Not confirmed by OSAC |
 | Throughput testing | Yes | **Done** | 1,700 events/s sustained, 100x realistic load |
+| Demo data | Yes | **Done** | Full infra + MaaS cost scenario in one script |
 
 ## Processing Pipeline for MaaS
 
@@ -206,10 +218,16 @@ MaaS event received (mock or future OSAC event)
       maas_inference_tokens = event.inference_tokens
       maas_requests       = event.requests
   → INSERT into metering_entries (one row per meter)
+
+Rating sweep (every 30s):
+  → find unrated metering_entries (LEFT JOIN cost_entries WHERE NULL)
+  → look up rate by (resource_type, meter_name, tenant_id)
+  → cost = metered_value × price_per_unit (or apply tiered pricing)
+  → INSERT into cost_entries
 ```
 
-Note: no duration calculation needed. The event carries absolute consumption
-values for the interval. This is simpler than the VM metering sweep.
+No duration calculation needed — events carry absolute consumption values.
+Rating happens automatically via the periodic sweep.
 
 ## Differences from VM Metering
 
