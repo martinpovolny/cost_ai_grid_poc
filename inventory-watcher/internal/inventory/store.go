@@ -155,6 +155,38 @@ CREATE TABLE IF NOT EXISTS metering_entries (
 
 CREATE INDEX IF NOT EXISTS idx_me_tenant_meter ON metering_entries (tenant_id, meter_name, period_start, period_end);
 CREATE INDEX IF NOT EXISTS idx_me_resource ON metering_entries (resource_id, meter_name);
+
+CREATE TABLE IF NOT EXISTS rates (
+    id             BIGSERIAL PRIMARY KEY,
+    tenant_id      TEXT,
+    resource_type  TEXT NOT NULL,
+    meter_name     TEXT NOT NULL,
+    price_per_unit NUMERIC(18,10) NOT NULL,
+    currency       TEXT NOT NULL DEFAULT 'USD',
+    tiers          JSONB,
+    effective_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    effective_to   TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_rates_lookup ON rates (resource_type, meter_name, effective_from);
+
+CREATE TABLE IF NOT EXISTS cost_entries (
+    id                BIGSERIAL PRIMARY KEY,
+    metering_entry_id BIGINT NOT NULL,
+    rate_id           BIGINT NOT NULL,
+    tenant_id         TEXT NOT NULL DEFAULT '',
+    resource_type     TEXT NOT NULL,
+    resource_id       TEXT NOT NULL,
+    meter_name        TEXT NOT NULL,
+    metered_value     NUMERIC(18,6) NOT NULL,
+    cost_amount       NUMERIC(18,10) NOT NULL,
+    currency          TEXT NOT NULL DEFAULT 'USD',
+    period_start      TIMESTAMPTZ NOT NULL,
+    period_end        TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ce_tenant_period ON cost_entries (tenant_id, period_start, period_end);
+CREATE INDEX IF NOT EXISTS idx_ce_metering ON cost_entries (metering_entry_id);
 `
 
 // InsertRawEvent stores an event immutably. Returns false if the event was
@@ -609,6 +641,117 @@ func (s *Store) InsertDailyUsageSummary(ctx context.Context, summary DailyUsageS
 func (s *Store) DeleteDailyUsageSummaries(ctx context.Context, date time.Time) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM daily_usage_summary WHERE usage_date = $1`, date)
 	return err
+}
+
+// UpsertRate inserts or updates a rate definition.
+func (s *Store) UpsertRate(ctx context.Context, rec RateRecord) (int64, error) {
+	var tiersJSON []byte
+	if rec.Tiers != nil {
+		var err error
+		tiersJSON, err = json.Marshal(rec.Tiers)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	var id int64
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO rates
+			(tenant_id, resource_type, meter_name, price_per_unit, currency, tiers, effective_from, effective_to)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT DO NOTHING
+		RETURNING id
+	`, rec.TenantID, rec.ResourceType, rec.MeterName, rec.PricePerUnit,
+		rec.Currency, tiersJSON, rec.EffectiveFrom, rec.EffectiveTo).Scan(&id)
+
+	if err != nil {
+		// ON CONFLICT DO NOTHING means no row returned if it already exists.
+		// That's fine — return 0 to indicate no insert.
+		return 0, nil
+	}
+	return id, nil
+}
+
+// FindRate looks up the applicable rate for a meter. Prefers tenant-specific
+// rates over global defaults.
+func (s *Store) FindRate(ctx context.Context, tenantID, resourceType, meterName string, at time.Time) (*RateRecord, error) {
+	var rec RateRecord
+	var tiersJSON []byte
+
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, tenant_id, resource_type, meter_name, price_per_unit, currency, tiers, effective_from, effective_to
+		FROM rates
+		WHERE resource_type = $1 AND meter_name = $2
+		  AND effective_from <= $3
+		  AND (effective_to IS NULL OR effective_to > $3)
+		  AND (tenant_id = $4 OR tenant_id IS NULL)
+		ORDER BY tenant_id NULLS LAST
+		LIMIT 1
+	`, resourceType, meterName, at, tenantID).Scan(
+		&rec.ID, &rec.TenantID, &rec.ResourceType, &rec.MeterName,
+		&rec.PricePerUnit, &rec.Currency, &tiersJSON,
+		&rec.EffectiveFrom, &rec.EffectiveTo)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if tiersJSON != nil {
+		if err := json.Unmarshal(tiersJSON, &rec.Tiers); err != nil {
+			return nil, fmt.Errorf("unmarshal tiers for rate %d: %w", rec.ID, err)
+		}
+	}
+
+	return &rec, nil
+}
+
+// UnratedMeteringEntries returns metering entries that don't have a corresponding cost entry.
+func (s *Store) UnratedMeteringEntries(ctx context.Context, limit int) ([]MeteringEntry, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT me.id, me.raw_event_id, me.resource_type, me.resource_id, me.tenant_id,
+		       me.meter_name, me.value, me.unit, me.period_start, me.period_end
+		FROM metering_entries me
+		LEFT JOIN cost_entries ce ON ce.metering_entry_id = me.id
+		WHERE ce.id IS NULL
+		ORDER BY me.id
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []MeteringEntry
+	for rows.Next() {
+		var r MeteringEntry
+		if err := rows.Scan(&r.ID, &r.RawEventID, &r.ResourceType, &r.ResourceID,
+			&r.TenantID, &r.MeterName, &r.Value, &r.Unit, &r.PeriodStart, &r.PeriodEnd); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// InsertCostEntry stores a computed cost record.
+func (s *Store) InsertCostEntry(ctx context.Context, entry CostEntry) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO cost_entries
+			(metering_entry_id, rate_id, tenant_id, resource_type, resource_id, meter_name,
+			 metered_value, cost_amount, currency, period_start, period_end)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, entry.MeteringEntryID, entry.RateID, entry.TenantID, entry.ResourceType,
+		entry.ResourceID, entry.MeterName, entry.MeteredValue, entry.CostAmount,
+		entry.Currency, entry.PeriodStart, entry.PeriodEnd)
+
+	return err
+}
+
+// RateCount returns the number of rates in the table.
+func (s *Store) RateCount(ctx context.Context) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM rates`).Scan(&count)
+	return count, err
 }
 
 func marshalLabels(labels json.RawMessage) ([]byte, error) {

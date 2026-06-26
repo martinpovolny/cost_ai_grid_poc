@@ -98,6 +98,38 @@ type MeteringEntry struct {
 	PeriodEnd    time.Time `json:"period_end"`
 }
 
+type Tier struct {
+	UpTo         *float64 `json:"up_to"`
+	PricePerUnit float64  `json:"price_per_unit"`
+}
+
+type RateRecord struct {
+	ID           int64      `json:"id"`
+	TenantID     *string    `json:"tenant_id"`
+	ResourceType string     `json:"resource_type"`
+	MeterName    string     `json:"meter_name"`
+	PricePerUnit float64    `json:"price_per_unit"`
+	Currency     string     `json:"currency"`
+	Tiers        []Tier     `json:"tiers"`
+	EffectiveFrom time.Time `json:"effective_from"`
+	EffectiveTo  *time.Time `json:"effective_to"`
+}
+
+type CostEntry struct {
+	ID              int64     `json:"id"`
+	MeteringEntryID int64     `json:"metering_entry_id"`
+	RateID          int64     `json:"rate_id"`
+	TenantID        string    `json:"tenant_id"`
+	ResourceType    string    `json:"resource_type"`
+	ResourceID      string    `json:"resource_id"`
+	MeterName       string    `json:"meter_name"`
+	MeteredValue    float64   `json:"metered_value"`
+	CostAmount      float64   `json:"cost_amount"`
+	Currency        string    `json:"currency"`
+	PeriodStart     time.Time `json:"period_start"`
+	PeriodEnd       time.Time `json:"period_end"`
+}
+
 type DailyUsageSummary struct {
 	UsageDate    time.Time `json:"usage_date"`
 	ClusterID    string    `json:"cluster_id"`

@@ -17,6 +17,7 @@ import (
 	"github.com/osac-project/cost-event-consumer/internal/inventory"
 	"github.com/osac-project/cost-event-consumer/internal/metering"
 	"github.com/osac-project/cost-event-consumer/internal/osac"
+	"github.com/osac-project/cost-event-consumer/internal/rating"
 	"github.com/osac-project/cost-event-consumer/internal/reconciler"
 	"github.com/osac-project/cost-event-consumer/internal/summarizer"
 	"github.com/osac-project/cost-event-consumer/internal/watcher"
@@ -56,6 +57,11 @@ func main() {
 	}
 	logger.Info("database schema ready")
 
+	if err := rating.SeedDefaultRates(ctx, store, logger); err != nil {
+		logger.Error("failed to seed default rates", "error", err)
+		os.Exit(1)
+	}
+
 	osacClient, err := osac.NewClient(cfg.OSACBaseURL, cfg.OSACToken, cfg.OSACCACert, logger)
 	if err != nil {
 		logger.Error("failed to create OSAC client", "error", err)
@@ -66,12 +72,14 @@ func main() {
 	w := watcher.New(osacClient, store, m, logger)
 	r := reconciler.New(osacClient, store, w, cfg.ReconcileInterval, logger)
 	s := summarizer.New(store, cfg.SummarizeInterval, logger)
+	rt := rating.New(store, 30*time.Second, logger)
 
 	logger.Info("starting cost-event-consumer",
 		"osac_url", cfg.OSACBaseURL,
 		"reconcile_interval", cfg.ReconcileInterval,
 		"summarize_interval", cfg.SummarizeInterval,
 		"metering_interval", "60s",
+		"rating_interval", "30s",
 		"ingest_addr", cfg.IngestListenAddr,
 	)
 
@@ -81,6 +89,7 @@ func main() {
 	g.Go(func() error { return r.Run(ctx) })
 	g.Go(func() error { return s.Run(ctx) })
 	g.Go(func() error { return m.Run(ctx) })
+	g.Go(func() error { return rt.Run(ctx) })
 
 	if cfg.IngestListenAddr != "" {
 		h := ingest.NewHandler(store, m, logger)
