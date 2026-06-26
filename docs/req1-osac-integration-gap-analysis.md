@@ -175,42 +175,33 @@ does not track projects as separate entities.
 **Effort:** Small — one new table, a few FK columns, one additional
 reconciliation call.
 
-## Processing Pipeline: Current vs Target
-
-**Current (inventory-watcher):**
+## Current Processing Pipeline
 
 ```
 OSAC Watch stream event
-  → dispatch by type (CREATED/UPDATED/DELETED)
-  → upsert inventory (clusters, compute_instances, instance_types)
+  → INSERT into raw_events (dedup on event_id)
+  → upsert inventory (clusters, compute_instances, projects, instance_types)
 
-Periodic summarizer
-  → query inventory for resources alive during period
-  → calculate duration × cores = cpu_core_hours
-  → write daily_usage_summary
-```
+Periodic metering sweep (every 60s)
+  → query billable resources (RUNNING VMs, READY/PROGRESSING clusters)
+  → calculate duration since last_metered_at
+  → INSERT metering_entries (vm_uptime_seconds, vm_cpu_core_seconds, ...)
+  → update last_metered_at
 
-**Target (with gaps closed):**
+On DELETE event
+  → final metering entries (gap from last sweep to deletion)
+  → mark resource deleted in inventory
 
-```
-Event received (Watch stream or CloudEvents)
-  → normalize to common event struct
-  → INSERT into raw_events (dedup on ce_id)
-  → upsert inventory (clusters, compute_instances, instance_types)
-  → if billable state:
-      → extract meters (vm_uptime_seconds, cpu_core_seconds, ...)
-      → INSERT into metering_entries (one row per meter)
+MaaS events (via ingest endpoint)
+  → INSERT raw_events
+  → upsert inventory_model
+  → INSERT metering_entries (maas_tokens_in, maas_tokens_out, ...)
 
 Metering entries feed downstream:
   → rate lookup → cost_entries (requirement #6)
   → quota check → alerts (requirement #5)
   → report API aggregation
 ```
-
-The key difference: the current system calculates usage in a batch
-summarization step from inventory timestamps. The target system produces
-metering entries per event as they arrive, which enables real-time quota
-checking and the 60-second processing SLA.
 
 ## Implementation Progress
 
@@ -254,6 +245,9 @@ checking and the 60-second processing SLA.
 
 The metering pipeline is now the foundation for downstream requirements:
 
+- **MaaS** (req #2) — **Done.** Model inventory, consumption-based metering
+  (4 token/request meters), simulator tool, 1,700 events/s throughput.
+  See [req2-maas-costing-gap-analysis.md](req2-maas-costing-gap-analysis.md).
 - **Rates + cost entries** (req #6) — look up rate by `meter_name` +
   `resource_type`, compute `cost = metering_value × rate`, insert into
   `cost_entries`. Tiered pricing applies here.
@@ -261,16 +255,19 @@ The metering pipeline is now the foundation for downstream requirements:
   meter_name for a period, compare against `quotas.limit_value`.
 - **Alerts** (req #5) — when accumulated metering crosses a threshold
   percentage of quota, insert alert and notify OSAC.
-- **MaaS** (req #2) — add `osac.model.lifecycle` event handling with
-  token-based meters (`maas_tokens_in`, `maas_requests`). Same pipeline,
-  different meters.
 
 ## Test Coverage
 
-19 assertions across 5 test groups (see `snippets/test-inventory-watcher.sh`):
+Up to 27 assertions across 8 test groups (see `snippets/test-inventory-watcher.sh`):
 
 1. **Reconciliation** — tables created, all OSAC resources imported, specs correct
 2. **Watch stream + raw events** — real-time event capture, raw event stored with metadata
 3. **Metering sweep** — entries created for 3 meter types, all billable instances metered, positive values
-4. **Deduplication** — duplicate event_id rejected
-5. **Data integrity** — all events have payload, no empty tenants
+4. **Project sync** — projects table exists, reconciled from OSAC
+5. **DELETE + final metering** — create VM, delete it, verify final meters + deleted_at + raw event
+6. **Non-billable state filtering** — STOPPED VM gets zero metering entries, NULL last_metered_at
+7. **Deduplication** — duplicate event_id rejected
+8. **Data integrity** — all events have payload, no empty tenants
+
+Run fast (skip metering, ~15s): `SKIP_METERING=1 bash snippets/test-inventory-watcher.sh`
+Run full (~90s): `bash snippets/test-inventory-watcher.sh`
