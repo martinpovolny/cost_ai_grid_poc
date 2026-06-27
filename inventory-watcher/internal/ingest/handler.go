@@ -61,7 +61,6 @@ type MaaSEventData struct {
 	State           string `json:"state"`
 	TokensIn        int64  `json:"tokens_in"`
 	TokensOut       int64  `json:"tokens_out"`
-	InferenceTokens int64  `json:"inference_tokens"`
 	Requests        int64  `json:"requests"`
 	DurationSeconds int    `json:"duration_seconds"`
 }
@@ -287,7 +286,6 @@ func (h *Handler) handleModelEvent(ctx interface{ Deadline() (time.Time, bool); 
 		State:           data.State,
 		TokensIn:        data.TokensIn,
 		TokensOut:       data.TokensOut,
-		InferenceTokens: data.InferenceTokens,
 		Requests:        data.Requests,
 		EventTime:       ce.Time,
 		DurationSeconds: float64(data.DurationSeconds),

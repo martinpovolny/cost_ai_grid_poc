@@ -83,7 +83,6 @@ Produced by [`internal/metering/metering.go`](../inventory-watcher/internal/mete
 |---|---|---|---|
 | `maas_tokens_in` | model | tokens | event.tokens_in |
 | `maas_tokens_out` | model | tokens | event.tokens_out |
-| `maas_inference_tokens` | model | tokens | event.inference_tokens |
 | `maas_requests` | model | requests | event.requests |
 
 ### Tiered Pricing

@@ -190,9 +190,9 @@ See [req2 gap analysis](req2-maas-costing-gap-analysis.md).
 
 | Acceptance Criterion | Status | Implementation |
 |---|---|---|
-| Ingest token dimensions | Done (mock) | `maas_tokens_in`, `maas_tokens_out`, `maas_inference_tokens` |
+| Ingest token dimensions | Done (mock) | `maas_tokens_in`, `maas_tokens_out` |
 | Token data available for cost calculation | Done | Metering entries → cost entries via rating sweep |
-| MaaS rate structure defined | Done | Default rates seeded: $0.50/M in, $1.50/M out, $1.00/M inference, $5.00/M requests |
+| MaaS rate structure defined | Done | Default rates seeded: $0.50/M tokens_in, $1.50/M tokens_out, $5.00/M requests |
 
 ---
 

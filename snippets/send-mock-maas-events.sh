@@ -37,7 +37,6 @@ for i in $(seq 1 "$COUNT"); do
   EVENT_ID="mock-maas-event-$(date +%s)-$i"
   TOKENS_IN=$((RANDOM % 50000 + 5000))
   TOKENS_OUT=$((RANDOM % 20000 + 2000))
-  INFERENCE=$((TOKENS_IN + TOKENS_OUT))
   REQUESTS=$((RANDOM % 100 + 10))
   EVENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
@@ -45,7 +44,7 @@ for i in $(seq 1 "$COUNT"); do
   db_exec "INSERT INTO raw_events
     (event_id, event_type, event_source, event_time, tenant_id, resource_type, resource_id, data)
     VALUES ('$EVENT_ID', 'osac.model.lifecycle', 'mock-maas-generator', '$EVENT_TIME', '$TENANT', 'Model', '$MODEL_ID',
-      '{\"tenant_id\": \"$TENANT\", \"model_id\": \"$MODEL_ID\", \"model_name\": \"llama-3-8b\", \"state\": \"MODEL_STATE_RUNNING\", \"tokens_in\": $TOKENS_IN, \"tokens_out\": $TOKENS_OUT, \"inference_tokens\": $INFERENCE, \"requests\": $REQUESTS, \"duration_seconds\": 60}')
+      '{\"tenant_id\": \"$TENANT\", \"model_id\": \"$MODEL_ID\", \"model_name\": \"llama-3-8b\", \"state\": \"MODEL_STATE_RUNNING\", \"tokens_in\": $TOKENS_IN, \"tokens_out\": $TOKENS_OUT, \"requests\": $REQUESTS, \"duration_seconds\": 60}')
     ON CONFLICT (event_id) DO NOTHING;" > /dev/null
 
   # Insert metering entries (what the pipeline would produce)
@@ -54,7 +53,6 @@ for i in $(seq 1 "$COUNT"); do
     VALUES
       ('model', '$MODEL_ID', '$TENANT', 'maas_tokens_in', $TOKENS_IN, 'tokens', '$PERIOD_END'::timestamptz - interval '60 seconds', '$PERIOD_END'),
       ('model', '$MODEL_ID', '$TENANT', 'maas_tokens_out', $TOKENS_OUT, 'tokens', '$PERIOD_END'::timestamptz - interval '60 seconds', '$PERIOD_END'),
-      ('model', '$MODEL_ID', '$TENANT', 'maas_inference_tokens', $INFERENCE, 'tokens', '$PERIOD_END'::timestamptz - interval '60 seconds', '$PERIOD_END'),
       ('model', '$MODEL_ID', '$TENANT', 'maas_requests', $REQUESTS, 'requests', '$PERIOD_END'::timestamptz - interval '60 seconds', '$PERIOD_END')
     ;" > /dev/null
 

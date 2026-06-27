@@ -60,19 +60,23 @@ Proposed fields:
 | `model_name` | string | Model identifier (e.g. `llama-3-8b`) |
 | `template` | string | MaaS template ID |
 | `state` | string | Model deployment state |
-| `tokens_in` | int | Input tokens processed in this interval |
-| `tokens_out` | int | Output tokens generated in this interval |
-| `inference_tokens` | int | Total inference tokens (in + out) |
+| `tokens_in` | int | Input (prompt) tokens processed in this interval |
+| `tokens_out` | int | Output (completion) tokens generated in this interval |
 | `requests` | int | Number of inference requests |
 | `duration_seconds` | int | Elapsed seconds since last event |
 
+> **Note:** The original proposal included an `inference_tokens` field
+> (tokens_in + tokens_out). This was removed — it's redundant. Real inference
+> engines (vLLM, TGI) report `prompt_tokens` and `completion_tokens` only.
+> Cloud providers price input and output tokens separately (output is
+> typically 3-5x more expensive due to sequential generation cost).
+
 Proposed meters:
-| Meter Name | Unit |
-|---|---|
-| `maas_tokens_in` | tokens |
-| `maas_tokens_out` | tokens |
-| `maas_inference_tokens` | tokens |
-| `maas_requests` | requests |
+| Meter Name | Unit | Description |
+|---|---|---|
+| `maas_tokens_in` | tokens | Input (prompt) tokens |
+| `maas_tokens_out` | tokens | Output (completion) tokens |
+| `maas_requests` | requests | Inference API calls |
 
 ## Open Questions (Blockers from OSAC Side)
 
@@ -97,7 +101,6 @@ auth, different data format.
 The proposed schema is reasonable but unconfirmed. Key unknowns:
 - Are `tokens_in` and `tokens_out` per-interval increments or cumulative?
   (Increments are easier for metering; cumulative requires delta calculation)
-- Is `inference_tokens` always `tokens_in + tokens_out`, or can it differ?
 - Is `model_name` a stable identifier we can use for rate lookups?
 - What states does a model deployment have? (`MODEL_STATE_RUNNING`, etc.)
 
@@ -120,7 +123,7 @@ it just needs: resource_type, resource_id, tenant_id, and meter values.
    with state, model_name, template, tenant
 
 2. **MaaS meter definitions** — `maas_tokens_in`, `maas_tokens_out`,
-   `maas_inference_tokens`, `maas_requests` in the metering pipeline
+   `maas_requests` in the metering pipeline
 
 3. **Simulated MaaS event ingestion** — since OSAC doesn't emit model events
    yet, we'll create a test endpoint or script that generates mock MaaS
@@ -149,8 +152,7 @@ it just needs: resource_type, resource_id, tenant_id, and meter values.
    with model_name, tenant, project, template, state.
 
 2. **MaaS metering pipeline** — consumption-based metering with 4 meters:
-   `maas_tokens_in`, `maas_tokens_out`, `maas_inference_tokens`,
-   `maas_requests`. Event-driven (no periodic sweep needed).
+   `maas_tokens_in`, `maas_tokens_out`, `maas_requests`. Event-driven (no periodic sweep needed).
 
 3. **Ingest endpoint** — HTTP POST `/api/v1/events` accepts MaaS CloudEvents
    and processes them through the full pipeline (raw_events → inventory →
@@ -173,8 +175,7 @@ it just needs: resource_type, resource_id, tenant_id, and meter values.
 
 6. **Rate engine** — rates table with flat and tiered pricing, automatic
    rating sweep every 30s. Default MaaS rates seeded on startup:
-   $0.50/M input tokens, $1.50/M output tokens, $1.00/M inference tokens,
-   $5.00/M requests. Metering entries are automatically converted to cost
+   $0.50/M input tokens, $1.50/M output tokens, $5.00/M requests. Metering entries are automatically converted to cost
    entries with dollar amounts. See
    [rating-engine-options.md](research/rating-engine-options.md) for the
    research on engine alternatives.
@@ -215,7 +216,6 @@ MaaS event received (mock or future OSAC event)
   → extract meters:
       maas_tokens_in      = event.tokens_in
       maas_tokens_out     = event.tokens_out
-      maas_inference_tokens = event.inference_tokens
       maas_requests       = event.requests
   → INSERT into metering_entries (one row per meter)
 
@@ -257,7 +257,6 @@ Pricing per million units:
 |---|---|---|
 | `maas_tokens_in` | $/million input tokens | $0.50/M tokens |
 | `maas_tokens_out` | $/million output tokens | $1.50/M tokens |
-| `maas_inference_tokens` | $/million inference tokens | $1.00/M tokens |
 | `maas_requests` | $/million requests | $5.00/M requests |
 
 Rates would vary by model (GPT-4 class vs. small models). This is a rate

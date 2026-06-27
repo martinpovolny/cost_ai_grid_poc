@@ -75,7 +75,7 @@ watch -n 2 'docker exec cost-db psql -U user -d costdb -c \
 ```
 
 Shows 4 meter types accumulating: `maas_tokens_in`, `maas_tokens_out`,
-`maas_inference_tokens`, `maas_requests`.
+`maas_requests`.
 
 ### Act 5: Per-tenant breakdown
 

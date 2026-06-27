@@ -32,7 +32,6 @@ type EventData struct {
 	State           string `json:"state"`
 	TokensIn        int64  `json:"tokens_in"`
 	TokensOut       int64  `json:"tokens_out"`
-	InferenceTokens int64  `json:"inference_tokens"`
 	Requests        int64  `json:"requests"`
 	DurationSeconds int    `json:"duration_seconds"`
 }
@@ -120,7 +119,6 @@ func main() {
 				State:           "MODEL_STATE_RUNNING",
 				TokensIn:        tokensIn,
 				TokensOut:       tokensOut,
-				InferenceTokens: tokensIn + tokensOut,
 				Requests:        int64(rand.Intn(200) + 1),
 				DurationSeconds: 60,
 			},

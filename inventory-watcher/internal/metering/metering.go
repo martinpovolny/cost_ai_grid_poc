@@ -213,7 +213,6 @@ type MaaSUsage struct {
 	State           string
 	TokensIn        int64
 	TokensOut       int64
-	InferenceTokens int64
 	Requests        int64
 	EventTime       time.Time
 	DurationSeconds float64
@@ -265,19 +264,6 @@ func maasMeters(usage MaaSUsage, periodStart, periodEnd time.Time) []inventory.M
 			TenantID:     usage.TenantID,
 			MeterName:    "maas_tokens_out",
 			Value:        float64(usage.TokensOut),
-			Unit:         "tokens",
-			PeriodStart:  periodStart,
-			PeriodEnd:    periodEnd,
-		})
-	}
-
-	if usage.InferenceTokens > 0 {
-		entries = append(entries, inventory.MeteringEntry{
-			ResourceType: "model",
-			ResourceID:   usage.ModelID,
-			TenantID:     usage.TenantID,
-			MeterName:    "maas_inference_tokens",
-			Value:        float64(usage.InferenceTokens),
 			Unit:         "tokens",
 			PeriodStart:  periodStart,
 			PeriodEnd:    periodEnd,

@@ -56,7 +56,6 @@ raw_events → inventory_model → metering_entries.
     "state": "MODEL_STATE_RUNNING",
     "tokens_in": 15000,
     "tokens_out": 8000,
-    "inference_tokens": 23000,
     "requests": 42,
     "duration_seconds": 60
   }
@@ -88,7 +87,6 @@ raw_events → inventory_model → metering_entries.
 | `state` | string | Yes | Model state (metered only when `"MODEL_STATE_RUNNING"`) |
 | `tokens_in` | int | Yes | Input tokens processed in this interval |
 | `tokens_out` | int | Yes | Output tokens generated in this interval |
-| `inference_tokens` | int | Yes | Total inference tokens (typically `tokens_in + tokens_out`) |
 | `requests` | int | Yes | Number of inference requests |
 | `duration_seconds` | int | Yes | Interval length in seconds |
 
@@ -107,7 +105,7 @@ On success, the event is processed through:
 1. **raw_events** — stored immutably ([`InsertRawEvent`](../inventory-watcher/internal/inventory/store.go))
 2. **inventory_model** — upserted ([`UpsertModel`](../inventory-watcher/internal/inventory/store.go))
 3. **metering_entries** — 4 entries created ([`MeterMaaSEvent`](../inventory-watcher/internal/metering/metering.go)):
-   `maas_tokens_in`, `maas_tokens_out`, `maas_inference_tokens`, `maas_requests`
+   `maas_tokens_in`, `maas_tokens_out`, `maas_requests`
 4. **cost_entries** — created asynchronously by the rating sweep (every 30s)
 
 ---

@@ -137,7 +137,6 @@ func SeedDefaultRates(ctx context.Context, store *inventory.Store, logger *slog.
 		{ResourceType: "cluster", MeterName: "cluster_worker_node_seconds", PricePerUnit: 0.10 / 3600, Currency: "USD", EffectiveFrom: now},
 		{ResourceType: "model", MeterName: "maas_tokens_in", PricePerUnit: 0.50 / 1_000_000, Currency: "USD", EffectiveFrom: now},
 		{ResourceType: "model", MeterName: "maas_tokens_out", PricePerUnit: 1.50 / 1_000_000, Currency: "USD", EffectiveFrom: now},
-		{ResourceType: "model", MeterName: "maas_inference_tokens", PricePerUnit: 1.00 / 1_000_000, Currency: "USD", EffectiveFrom: now},
 		{ResourceType: "model", MeterName: "maas_requests", PricePerUnit: 5.00 / 1_000_000, Currency: "USD", EffectiveFrom: now},
 	}
 
@@ -176,7 +175,6 @@ func SeedDefaultQuotas(ctx context.Context, store *inventory.Store, logger *slog
 		{"vm_uptime_seconds", 86400, "seconds"},
 		{"maas_tokens_in", 10_000_000, "tokens"},
 		{"maas_tokens_out", 5_000_000, "tokens"},
-		{"maas_inference_tokens", 15_000_000, "tokens"},
 		{"maas_requests", 100_000, "requests"},
 	}
 
