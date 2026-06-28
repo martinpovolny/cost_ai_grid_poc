@@ -7,11 +7,14 @@
 
 ## Endpoints
 
-| Method | Path | Description | Handler |
-|---|---|---|---|
-| GET | `/api/v1/health` | Health check | inline in `ServeMux` |
-| POST | `/api/v1/events` | Ingest a MaaS CloudEvent | `handleEvent` |
-| GET | `/api/v1/quotas/{tenant_id}` | Quota status for a tenant | `handleQuotaStatus` |
+| Method | Path | Description | Handler | Tests |
+|---|---|---|---|---|
+| GET | `/api/v1/health` | Health check | inline in `ServeMux` | `TestHealthEndpoint` |
+| POST | `/api/v1/events` | Ingest CloudEvents (VM, Cluster, MaaS) | `handleEvent` | `TestIngestMaaSEvent`, `TestIngestMaaSEventDuplicate`, `TestIngestMaaSEventNonBillable`, `TestIngestVMHeartbeat`, `TestIngestVMHeartbeatNonBillable`, `TestIngestClusterHeartbeat`, `TestIngestBadJSON` |
+| GET | `/api/v1/quotas/{tenant_id}` | Quota status with alerts | `handleQuotaStatus` | `TestQuotaStatus`, `TestQuotaStatusMissingTenant`, `TestQuotaStatusWithConsumption` |
+
+**Test file:** [`internal/ingest/handler_test.go`](../inventory-watcher/internal/ingest/handler_test.go)
+**Run:** `TEST_DB_URL=postgres://user:pass@localhost:5434/costdb_test go test ./internal/ingest/ -v`
 
 ---
 
