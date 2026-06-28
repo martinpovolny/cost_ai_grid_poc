@@ -23,3 +23,4 @@ server.key
 server.crt
 docs/.markdown-viewer-temp.html
 docs/research/.markdown-viewer-temp.html
+docs/inputs/.markdown-viewer-temp.html
