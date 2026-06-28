@@ -60,9 +60,10 @@ check whether tenants are within their resource limits.
 | [Requirements comparison](requirements-comparison.md) | Updated spec vs original brief — what changed, what's ahead of schedule |
 | [Req #1 gap analysis](req1-osac-integration-gap-analysis.md) | OSAC integration — inventory, metering, billable states |
 | [Req #2 gap analysis](req2-maas-costing-gap-analysis.md) | MaaS token metering — consumption-based billing |
+| [Req #8 gap analysis](req8-bare-metal-gap-analysis.md) | Bare metal costing — OSAC blockers and plan |
 
 **Spec references:**
-- [Updated requirements](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md) (csv_poc_requirements_summary.md)
+- [Consolidated requirements v1.1](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md)
 - [Original requirements brief](https://github.com/martinpovolny/cost_ai_grid_poc/blob/main/docs/requirements/ai_grid_poc_requirements_brief.md)
 
 ## Architecture Decisions

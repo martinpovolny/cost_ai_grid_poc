@@ -133,12 +133,14 @@ entity we already track or are a separate concept.
 ---
 
 ### REQ-8 — Bare Metal Costing
-**Status:** Not started
-**Spec:** [csv_poc_requirements_summary.md#req-8](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md#req-8--bare-metal-costing-osac-bare-metal-service)
+**Status:** Not started (blocked on OSAC)
+**Spec:** [poc_requirements_overview.md#req-8](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-8--bare-metal-costing-osac-bare-metal-service)
 
-OSAC has a [BareMetalInstance proto](https://github.com/osac-project/fulfillment-service/blob/main/proto/public/osac/public/v1/baremetal_instance_type.proto)
-but it's not in the Watch stream `oneof` yet. Same implementation pattern as
-VM metering — add handler + meters.
+Proto and REST API exist but BareMetalInstance is not in the Watch stream
+`oneof` — no real-time events. Our implementation is the same pattern as VMs
+(small effort), blocked on OSAC adding it to the event payload.
+
+**Related docs:** [req8 gap analysis](req8-bare-metal-gap-analysis.md)
 
 ---
 
@@ -272,6 +274,7 @@ See [`snippets/query-costs.sh`](../snippets/query-costs.sh) for demo queries.
 | [Rating Engine Options](research/rating-engine-options.md) | CloudKitty, GoRules, Drools evaluation |
 | [req1 Gap Analysis](req1-osac-integration-gap-analysis.md) | OSAC integration implementation details |
 | [req2 Gap Analysis](req2-maas-costing-gap-analysis.md) | MaaS costing implementation details |
+| [req8 Gap Analysis](req8-bare-metal-gap-analysis.md) | Bare metal costing — OSAC blockers and implementation plan |
 | [Requirements Comparison](requirements-comparison.md) | Updated spec vs original brief |
 | [Demo Scenario 1](demo-scenario-1.md) | Infrastructure metering demo |
 | [Demo Scenario 2](demo-scenario-2-maas.md) | MaaS metering + cost demo |
