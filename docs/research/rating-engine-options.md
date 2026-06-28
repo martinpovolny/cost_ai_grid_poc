@@ -1,5 +1,8 @@
 # Rating Engine Options
 
+> **Source:** Input from Pau (Jun 27, 2026) on rating engine alternatives
+> used in the OpenStack and open-source billing ecosystem.
+
 ## Context
 
 The metering pipeline produces `metering_entries` rows:
