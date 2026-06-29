@@ -1,5 +1,7 @@
 # Demo Scenario 1: Full Pipeline — Inventory, Metering, Cost, Quotas
 
+> **Demo recording:** [Google Drive video](https://drive.google.com/file/d/1gagbe1-VhpyYVi4K8x1IA1mjLSEZZli0/view?usp=drive_link)
+
 ## Purpose
 
 Demonstrate the complete cost management pipeline: OSAC event ingestion,

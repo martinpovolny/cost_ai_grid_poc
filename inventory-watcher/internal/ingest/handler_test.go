@@ -208,7 +208,9 @@ func TestIngestMaaSEventNonBillable(t *testing.T) {
 // ── Event ingest: VM heartbeat ──
 
 func TestIngestVMHeartbeat(t *testing.T) {
-	eventID := fmt.Sprintf("test-vm-%d", time.Now().UnixNano())
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	eventID := "test-vm-" + suffix
+	instanceID := "test-vm-" + suffix
 	event := map[string]interface{}{
 		"specversion": "1.0",
 		"type":        "osac.compute_instance.lifecycle",
@@ -221,7 +223,7 @@ func TestIngestVMHeartbeat(t *testing.T) {
 			"cpu_core_seconds":   480,
 			"memory_gib_seconds": 1920,
 			"tenant_id":          "test-tenant",
-			"instance_id":        "test-vm-1",
+			"instance_id":        instanceID,
 			"template":           "osac.templates.ocp_virt_vm",
 			"state":              "COMPUTE_INSTANCE_STATE_RUNNING",
 			"cores":              8,
@@ -245,14 +247,14 @@ func TestIngestVMHeartbeat(t *testing.T) {
 
 	// Verify 3 metering entries (uptime, cpu, memory)
 	testStore.Pool().QueryRow(ctx,
-		"SELECT count(*) FROM metering_entries WHERE resource_id = 'test-vm-1' AND resource_type = 'compute_instance'").Scan(&count)
+		"SELECT count(*) FROM metering_entries WHERE resource_id = $1 AND resource_type = 'compute_instance'", instanceID).Scan(&count)
 	if count != 3 {
 		t.Errorf("expected 3 VM metering entries, got %d", count)
 	}
 
 	// Verify inventory created
 	testStore.Pool().QueryRow(ctx,
-		"SELECT count(*) FROM inventory_compute_instance WHERE instance_id = 'test-vm-1'").Scan(&count)
+		"SELECT count(*) FROM inventory_compute_instance WHERE instance_id = $1", instanceID).Scan(&count)
 	if count != 1 {
 		t.Errorf("expected VM in inventory, got %d", count)
 	}
@@ -260,7 +262,7 @@ func TestIngestVMHeartbeat(t *testing.T) {
 	// Verify last_metered_at set
 	var metered bool
 	testStore.Pool().QueryRow(ctx,
-		"SELECT last_metered_at IS NOT NULL FROM inventory_compute_instance WHERE instance_id = 'test-vm-1'").Scan(&metered)
+		"SELECT last_metered_at IS NOT NULL FROM inventory_compute_instance WHERE instance_id = $1", instanceID).Scan(&metered)
 	if !metered {
 		t.Error("last_metered_at should be set")
 	}
@@ -298,7 +300,9 @@ func TestIngestVMHeartbeatNonBillable(t *testing.T) {
 // ── Event ingest: Cluster heartbeat ──
 
 func TestIngestClusterHeartbeat(t *testing.T) {
-	eventID := fmt.Sprintf("test-cluster-%d", time.Now().UnixNano())
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	eventID := "test-cluster-" + suffix
+	clusterID := "test-cluster-" + suffix
 	event := map[string]interface{}{
 		"specversion": "1.0",
 		"type":        "osac.cluster.lifecycle",
@@ -311,7 +315,7 @@ func TestIngestClusterHeartbeat(t *testing.T) {
 			"worker_node_seconds": 180,
 			"node_count":          3,
 			"tenant_id":           "test-tenant",
-			"cluster_id":          "test-cluster-1",
+			"cluster_id":          clusterID,
 			"template":            "osac.templates.ocp_ci_small",
 			"state":               "CLUSTER_STATE_READY",
 			"host_type":           "_control_plane",
@@ -334,7 +338,7 @@ func TestIngestClusterHeartbeat(t *testing.T) {
 
 	// Control plane event → cluster_uptime_seconds + cluster_worker_node_seconds
 	testStore.Pool().QueryRow(ctx,
-		"SELECT count(*) FROM metering_entries WHERE resource_id = 'test-cluster-1' AND resource_type = 'cluster'").Scan(&count)
+		"SELECT count(*) FROM metering_entries WHERE resource_id = $1 AND resource_type = 'cluster'", clusterID).Scan(&count)
 	if count < 1 {
 		t.Errorf("expected >= 1 cluster metering entries, got %d", count)
 	}
