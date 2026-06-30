@@ -281,11 +281,71 @@ See [`snippets/query-costs.sh`](../snippets/query-costs.sh) for demo queries.
 
 ---
 
+## Authentication & Authorization
+
+### Authentication (authn) — Implemented
+
+JWT bearer token validation, compatible with OSAC's auth model. Uses the
+same `golang-jwt/jwt/v5` library and validates against the same OIDC/JWKS
+endpoint that OSAC uses. The same token works for both OSAC API calls and
+our endpoints.
+
+**Implementation:** [`internal/authn/middleware.go`](../inventory-watcher/internal/authn/middleware.go)
+
+**How it works:**
+1. On startup, fetches JWKS public keys from the OIDC issuer
+2. On each request, validates the JWT signature, expiry, and issuer
+3. Stores claims in request context for downstream use
+4. Health endpoint (`/api/v1/health`) is always unauthenticated
+
+**Quick start:**
+```bash
+# Disabled by default (PoC) — all requests pass through:
+INGEST_LISTEN_ADDR=localhost:8020 ./inventory-watcher
+
+# Enabled — requires valid JWT token on all requests:
+AUTH_ISSUER_URL=https://localhost:8013 \
+OSAC_CA_CERT=/path/to/server.crt \
+INGEST_LISTEN_ADDR=localhost:8020 \
+./inventory-watcher
+```
+
+When enabled, all requests must include `Authorization: Bearer <token>`.
+Generate a token with `scripts/gen_token.py` (same token used for OSAC).
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `AUTH_ISSUER_URL` | (empty = disabled) | OIDC issuer URL (e.g., `https://localhost:8013`) |
+| `OSAC_CA_CERT` | (empty) | CA certificate for TLS verification of the OIDC endpoint |
+
+### Authorization (authz) — Gap
+
+OSAC uses OPA (Open Policy Agent) with embedded Rego policies for
+per-request authorization: "is this user allowed to do this operation on
+this resource in this tenant?" We do not implement authz.
+
+**Current gap:**
+- Any authenticated user can query any tenant's quota status
+- Any authenticated user can ingest events for any tenant
+- No tenant-scoping based on JWT claims
+
+**When needed:** When the system is exposed to multiple users with
+different tenant access. For the PoC with a single admin token, authn
+alone is sufficient.
+
+**Path to implementation:** Extract `tenants` from JWT claims (OSAC's
+`Subject` model), compare against the `tenant_id` in the request. Reject
+if the user doesn't have access to the requested tenant.
+
+---
+
 ## Future Work (Post-PoC)
 
 | Req | Title | Status | Notes |
 |---|---|---|---|
-| [REQ-6](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-6--platform-security--access-control) | Security & Access Control | N/A | In-product, no gap |
+| [REQ-6](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-6--platform-security--access-control) | Security & Access Control | Partial | Authn done, authz gap |
 | [REQ-7](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-7--reconciliation-auditing--dispute-tracing) | Reconciliation & Auditing | Partial | `raw_events` provides immutable audit trail |
 | [REQ-12](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-12--daily-openshift-virtualization-costs) | Daily OCP Virt Costs | TBD | Pending PM confirmation |
 

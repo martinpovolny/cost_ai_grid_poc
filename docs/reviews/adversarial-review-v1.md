@@ -395,10 +395,17 @@ pre-commit hooks. Tests exist but are not enforced.
 | Category | Count |
 |---|---|
 | Total findings | 17 |
-| Critical | 3 |
-| High | 4 |
-| Medium | 5 |
-| Low | 3 |
-| Informational | 2 |
-| Accepted | 3 |
-| Open | 14 |
+| Fixed | 8 (#1, #2, #5, #6, #7, #10, #11, #12) |
+| Accepted | 3 (#4, #8, #16) |
+| Open | 6 (#3, #9, #13, #14, #15, #17) |
+
+### Fixes Applied (v1.1, 2026-06-30)
+
+- **#1** No auth → JWT middleware compatible with OSAC (authn only; authz gap documented)
+- **#2** Error swallowing → handlers return errors; 500 on failure
+- **#5** HTTP limits → ReadTimeout 10s, WriteTimeout 10s, MaxBytesReader 1MB
+- **#6** Division by zero → guard `q.LimitValue <= 0`
+- **#7** Input validation → required fields, length caps, unmarshal error handling
+- **#10** JSON injection → `writeErrorJSON` helper with `json.NewEncoder`
+- **#11** Scanner buffer → 64KB → 1MB
+- **#12** N+1 query → batch instance type lookup via `ListAllInstanceTypes`
