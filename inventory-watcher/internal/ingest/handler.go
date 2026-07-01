@@ -88,6 +88,7 @@ func (h *Handler) ServeMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/quotas/", h.handleQuotaStatus)
 	mux.HandleFunc("GET /api/v1/reports/costs", h.handleCostReport)
 	mux.HandleFunc("GET /api/v1/reports/summary", h.handlePipelineSummary)
+	mux.HandleFunc("GET /api/v1/customers/", h.handleBalanceCheck)
 	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		writeJSON(w, map[string]string{"status": "ok"})
@@ -504,4 +505,67 @@ func (h *Handler) handlePipelineSummary(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, summary)
+}
+
+// ── Balance Check (IPP compatibility) ──
+// GET /api/v1/customers/{customerID}/entitlements/{featureKey}/value?model={model}
+// Returns {has_access, balance, usage, overage} for the IPP external-metering plugin.
+
+type entitlementValue struct {
+	HasAccess bool    `json:"has_access"`
+	Balance   float64 `json:"balance"`
+	Usage     float64 `json:"usage"`
+	Overage   float64 `json:"overage"`
+}
+
+func (h *Handler) handleBalanceCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/customers/")
+	parts := strings.Split(path, "/")
+	// Expect: {customerID}/entitlements/{featureKey}/value
+	if len(parts) < 4 || parts[1] != "entitlements" || parts[3] != "value" {
+		writeErrorJSON(w, "expected /api/v1/customers/{id}/entitlements/{key}/value", http.StatusBadRequest)
+		return
+	}
+
+	customerID := parts[0]
+	featureKey := parts[2]
+	_ = featureKey // available for future feature-scoped quotas
+
+	ctx := r.Context()
+	now := time.Now().UTC()
+	periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := periodStart.AddDate(0, 1, 0)
+
+	quotas, err := h.store.QuotasForTenant(ctx, customerID, now)
+	if err != nil || len(quotas) == 0 {
+		writeJSON(w, entitlementValue{HasAccess: true, Balance: math.MaxFloat64})
+		return
+	}
+
+	totalLimit := 0.0
+	totalUsage := 0.0
+	for _, q := range quotas {
+		consumed, err := h.store.MeteringSum(ctx, customerID, q.MeterName, periodStart, periodEnd)
+		if err != nil {
+			continue
+		}
+		totalLimit += q.LimitValue
+		totalUsage += consumed
+	}
+
+	balance := totalLimit - totalUsage
+	overage := 0.0
+	if balance < 0 {
+		overage = -balance
+		balance = 0
+	}
+
+	writeJSON(w, entitlementValue{
+		HasAccess: totalUsage < totalLimit,
+		Balance:   balance,
+		Usage:     totalUsage,
+		Overage:   overage,
+	})
 }
