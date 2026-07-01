@@ -27,6 +27,8 @@ type CloudEvent struct {
 	Data            json.RawMessage `json:"data"`
 }
 
+// ComputeInstanceEventData matches the OSAC metering collector VMaaS schema.
+// Source: https://github.com/masayag/osac-metering-discover-poc/blob/main/collector/README.md#cloudevents-schema
 type ComputeInstanceEventData struct {
 	DurationSeconds  int    `json:"duration_seconds"`
 	CPUCoreSeconds   int64  `json:"cpu_core_seconds"`
@@ -40,6 +42,8 @@ type ComputeInstanceEventData struct {
 	MemoryGiB        int32  `json:"memory_gib"`
 }
 
+// ClusterEventData matches the OSAC metering collector CaaS schema.
+// Source: https://github.com/masayag/osac-metering-discover-poc/blob/main/collector/README-caas.md#cloudevents-schema
 type ClusterEventData struct {
 	DurationSeconds   int    `json:"duration_seconds"`
 	WorkerNodeSeconds int64  `json:"worker_node_seconds"`
@@ -51,8 +55,11 @@ type ClusterEventData struct {
 	HostType          string `json:"host_type"`
 }
 
+// MaaSEventData accepts both our mock format and the real IPP external-metering plugin format.
+// IPP source: https://github.com/opendatahub-io/ai-gateway-payload-processing/pull/320
+// IPP client: https://github.com/opendatahub-io/ai-gateway-payload-processing/blob/61b6160/pkg/plugins/external-metering/client.go
 type MaaSEventData struct {
-	// Our mock format fields
+	// Legacy mock format fields (our simulator, backwards compat)
 	TenantID        string `json:"tenant_id"`
 	ModelID         string `json:"model_id"`
 	ModelName       string `json:"model_name"`
@@ -63,7 +70,7 @@ type MaaSEventData struct {
 	Requests        int64  `json:"requests"`
 	DurationSeconds int    `json:"duration_seconds"`
 	RequestCount    int64  `json:"request_count"`
-	// Real IPP format fields
+	// IPP external-metering plugin fields (authoritative format)
 	User                string `json:"user"`
 	Group               string `json:"group"`
 	Subscription        string `json:"subscription"`
@@ -79,10 +86,15 @@ type MaaSEventData struct {
 }
 
 const (
-	EventTypeComputeInstance  = "osac.compute_instance.lifecycle"
-	EventTypeCluster          = "osac.cluster.lifecycle"
-	EventTypeModel            = "osac.model.lifecycle"
-	EventTypeInferenceTokens  = "inference.tokens.used"
+	// VMaaS/CaaS event types from OSAC metering collector.
+	// Source: https://github.com/masayag/osac-metering-discover-poc/blob/main/collector/
+	EventTypeComputeInstance = "osac.compute_instance.lifecycle"
+	EventTypeCluster         = "osac.cluster.lifecycle"
+	// Legacy mock MaaS event type (our simulator).
+	EventTypeModel = "osac.model.lifecycle"
+	// Real IPP external-metering plugin event type.
+	// Source: https://github.com/opendatahub-io/ai-gateway-payload-processing/pull/320
+	EventTypeInferenceTokens = "inference.tokens.used"
 
 	maxRequestBodySize = 1 << 20 // 1MB
 	maxIDLength        = 256
@@ -561,7 +573,9 @@ func (h *Handler) handlePipelineSummary(w http.ResponseWriter, r *http.Request) 
 
 // ── Balance Check (IPP compatibility) ──
 // GET /api/v1/customers/{customerID}/entitlements/{featureKey}/value?model={model}
-// Returns {has_access, balance, usage, overage} for the IPP external-metering plugin.
+//
+// Response format matches the entitlementValue struct from the IPP external-metering plugin.
+// Source: https://github.com/opendatahub-io/ai-gateway-payload-processing/blob/61b6160/pkg/plugins/external-metering/client.go
 
 type entitlementValue struct {
 	HasAccess bool    `json:"has_access"`
