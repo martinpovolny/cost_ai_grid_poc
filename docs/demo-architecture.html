@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cost Event Consumer — Architecture Overview</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --card: #ffffff;
+    --border: #e0e0e0;
+    --text: #212121;
+    --muted: #757575;
+    --accent: #1565C0;
+    --green: #2E7D32;
+    --orange: #E65100;
+    --red: #C62828;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.8rem; margin-bottom: 0.5rem; color: var(--accent); }
+  h2 { font-size: 1.3rem; margin: 2rem 0 1rem; color: var(--text); border-bottom: 2px solid var(--accent); padding-bottom: 0.3rem; }
+  h3 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; color: var(--muted); }
+  p { margin-bottom: 1rem; }
+  .subtitle { color: var(--muted); font-size: 0.95rem; margin-bottom: 2rem; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .diagram-container {
+    overflow-x: auto;
+    text-align: center;
+    padding: 1rem 0;
+  }
+  .diagram-container img {
+    max-width: 100%;
+    height: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    margin: 1rem 0;
+  }
+  th, td {
+    padding: 0.6rem 0.8rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th { background: #f5f5f5; font-weight: 600; }
+  .status-done { color: var(--green); font-weight: 600; }
+  .status-partial { color: var(--orange); font-weight: 600; }
+  .status-blocked { color: var(--red); font-weight: 600; }
+  .status-notstarted { color: var(--muted); }
+  .tag {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+  .tag-critical { background: #FFCDD2; color: #B71C1C; }
+  .tag-high { background: #FFE0B2; color: #E65100; }
+  .tag-medium { background: #FFF9C4; color: #F57F17; }
+  .tag-must { background: #C8E6C9; color: #1B5E20; }
+  .decisions { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
+  .decision {
+    background: #f5f5f5;
+    border-left: 4px solid var(--accent);
+    padding: 1rem;
+    border-radius: 0 6px 6px 0;
+  }
+  .decision h4 { font-size: 0.95rem; margin-bottom: 0.3rem; }
+  .decision p { font-size: 0.85rem; color: var(--muted); margin: 0; }
+  .nav { display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap; }
+  .nav a {
+    color: var(--accent);
+    text-decoration: none;
+    padding: 0.4rem 0.8rem;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    font-size: 0.85rem;
+  }
+  .nav a:hover { background: var(--accent); color: white; }
+</style>
+</head>
+<body>
+
+<h1>Cost Event Consumer</h1>
+<p class="subtitle">Architecture overview for the OSAC cost management PoC &mdash; capacity-based and consumption-based cost tracking.</p>
+
+<div class="nav">
+  <a href="#current">Current Architecture</a>
+  <a href="#production">Production Target</a>
+  <a href="#migration">OpenMeter Migration</a>
+  <a href="#rating">Rating Pipeline</a>
+  <a href="#requirements">Requirements</a>
+  <a href="#decisions">Decisions</a>
+  <a href="demo-rating.html">Rating Demo &rarr;</a>
+</div>
+
+<!-- ─── Current Architecture ─── -->
+<h2 id="current">Current PoC Architecture</h2>
+<div class="card">
+  <p>The cost-event-consumer runs as a standalone Go binary connecting to the OSAC fulfillment-service. It combines real-time Watch stream events with periodic REST List reconciliation (Watch+List pattern), a 60-second metering sweep, and a 30-second rating sweep.</p>
+  <div class="diagram-container">
+    <img src="diagrams/architecture-poc.svg" alt="PoC Architecture">
+  </div>
+  <h3>Key Components</h3>
+  <table>
+    <tr><th>Component</th><th>Role</th><th>Interval</th></tr>
+    <tr><td>Watcher</td><td>Consumes OSAC Watch stream (SSE) for real-time inventory events</td><td>Continuous</td></tr>
+    <tr><td>Reconciler</td><td>Polls OSAC REST List APIs to catch missed events (drift correction)</td><td>Every 5 min</td></tr>
+    <tr><td>Metering Sweep</td><td>Calculates usage for all billable resources</td><td>Every 60s</td></tr>
+    <tr><td>Rating Sweep</td><td>Applies rates to unrated metering entries, produces cost entries</td><td>Every 30s</td></tr>
+    <tr><td>Ingest API</td><td>Accepts CloudEvents via HTTP POST (VM, Cluster, MaaS heartbeats)</td><td>On request</td></tr>
+    <tr><td>Quota API</td><td>Returns per-tenant quota/budget status with threshold checks</td><td>On request</td></tr>
+  </table>
+</div>
+
+<!-- ─── Production Target ─── -->
+<h2 id="production">Production Target</h2>
+<div class="card">
+  <p>The production architecture evolves in three ways: the Watch stream switches to the private API (28 entity types including catalog items and bare metal), Kafka becomes available as a CloudEvents transport, and the OSAC metering collector replaces the local metering sweep as the primary data source.</p>
+  <div class="diagram-container">
+    <img src="diagrams/architecture-production.svg" alt="Production Architecture">
+  </div>
+  <h3>Key Changes from PoC</h3>
+  <table>
+    <tr><th>Area</th><th>PoC</th><th>Production</th></tr>
+    <tr><td>Watch stream</td><td>Public API (10 entities)</td><td>Private API (28 entities)</td></tr>
+    <tr><td>Event transport</td><td>SSE Watch + HTTP ingest</td><td>+ Kafka consumer</td></tr>
+    <tr><td>Metering source</td><td>Local 60s sweep</td><td>OSAC collector (sweep as fallback)</td></tr>
+    <tr><td>Catalog items</td><td>Not synced</td><td>REST List polling for SKU→rate mapping</td></tr>
+    <tr><td>Bare metal</td><td>Not supported</td><td>Reconciler + Watch (same pattern as VMs)</td></tr>
+    <tr><td>Rating engine</td><td>SQL + Go (flat/tiered)</td><td>+ GoRules/Zen for custom dimensions</td></tr>
+    <tr><td>Notifications</td><td>Pull only (quota API)</td><td>+ Webhook push on threshold cross</td></tr>
+    <tr><td>Reports</td><td>SQL queries</td><td>REST API (JSON + CSV export)</td></tr>
+  </table>
+</div>
+
+<!-- ─── OpenMeter Migration ─── -->
+<h2 id="migration">OpenMeter &rarr; Cost Migration</h2>
+<div class="card">
+  <p>The OSAC metering collector currently sends CloudEvents to OpenMeter. Our ingest endpoint accepts the <strong>same CloudEvents format at the same path</strong> (<code>POST /api/v1/events</code>). Migration is a URL change &mdash; no schema changes needed. Both systems can run in parallel during validation.</p>
+  <div class="diagram-container">
+    <img src="diagrams/openmeter-migration.svg" alt="OpenMeter Migration">
+  </div>
+</div>
+
+<!-- ─── Rating Pipeline ─── -->
+<h2 id="rating">Rating Pipeline</h2>
+<div class="card">
+  <p>The rating pipeline turns metering entries into cost entries. It supports flat pricing, tiered pricing (with free tiers), per-tenant rate overrides, and Koku-compatible cost type classification.</p>
+  <div class="diagram-container">
+    <img src="diagrams/rating-pipeline.svg" alt="Rating Pipeline">
+  </div>
+  <p><a href="demo-rating.html">See the interactive rating demo &rarr;</a></p>
+</div>
+
+<!-- ─── Requirements ─── -->
+<h2 id="requirements">Requirements Status</h2>
+<div class="card">
+  <table>
+    <tr><th>Req</th><th>Priority</th><th>Title</th><th>Status</th><th>Notes</th></tr>
+    <tr><td>POC-ENV</td><td><span class="tag tag-critical">CRITICAL</span></td><td>On-prem deployment</td><td class="status-notstarted">Not started</td><td>RHCM team scope</td></tr>
+    <tr><td>POC-ARCH</td><td><span class="tag tag-critical">CRITICAL</span></td><td>Capacity-based charging</td><td class="status-done">Done</td><td></td></tr>
+    <tr><td>REQ-1</td><td><span class="tag tag-critical">CRITICAL</span></td><td>OSAC integration</td><td class="status-done">Done</td><td>Watch + List reconciliation</td></tr>
+    <tr><td>REQ-1a</td><td><span class="tag tag-high">HIGH</span></td><td>Cluster lifecycle</td><td class="status-done">Done</td><td>Verify "cluster orders" mapping</td></tr>
+    <tr><td>REQ-1b</td><td><span class="tag tag-critical">CRITICAL</span></td><td>Heartbeat ingestion</td><td class="status-done">Done</td><td>CloudEvents ingest + local sweep</td></tr>
+    <tr><td>REQ-2</td><td><span class="tag tag-critical">CRITICAL</span></td><td>Real-time cost calc</td><td class="status-done">Done</td><td>&lt;1ms/event, cost within 30s</td></tr>
+    <tr><td>REQ-2a</td><td><span class="tag tag-high">HIGH</span></td><td>MaaS CloudEvents</td><td class="status-done">Done (mock)</td><td>Blocked on OSAC Model entity</td></tr>
+    <tr><td>REQ-3</td><td><span class="tag tag-high">HIGH</span></td><td>Granular cost tracking</td><td class="status-partial">Partial</td><td>Data exists, no export API</td></tr>
+    <tr><td>REQ-3a</td><td><span class="tag tag-high">HIGH</span></td><td>Tenant/project attribution</td><td class="status-done">Done</td><td></td></tr>
+    <tr><td>REQ-3b</td><td><span class="tag tag-medium">MEDIUM</span></td><td>Service catalog sync</td><td class="status-partial">Partial</td><td>Instance types synced, rates manual</td></tr>
+    <tr><td>REQ-4</td><td><span class="tag tag-high">HIGH</span></td><td>Token metering (MaaS)</td><td class="status-done">Done (mock)</td><td></td></tr>
+    <tr><td>REQ-5</td><td><span class="tag tag-medium">MEDIUM</span></td><td>Chargeback reporting</td><td class="status-partial">Partial</td><td>SQL queries, no export endpoint</td></tr>
+    <tr><td>REQ-8</td><td><span class="tag tag-high">HIGH</span></td><td>Bare metal costing</td><td class="status-blocked">Blocked</td><td>BareMetalInstance not in public Watch</td></tr>
+    <tr><td>REQ-9</td><td><span class="tag tag-high">HIGH</span></td><td>Quota/budget status</td><td class="status-done">Done</td><td></td></tr>
+    <tr><td>REQ-10</td><td><span class="tag tag-high">HIGH</span></td><td>Threshold notifications</td><td class="status-done">Done (pull)</td><td>Webhook push deferred</td></tr>
+    <tr><td>REQ-11</td><td><span class="tag tag-must">MUST</span></td><td>Cost tiers</td><td class="status-done">Done</td><td>Tiered pricing in rate engine</td></tr>
+    <tr><td>REQ-13</td><td><span class="tag tag-high">HIGH</span></td><td>Custom rate dimensions</td><td class="status-notstarted">Not started</td><td>GoRules/Zen candidate (post-PoC)</td></tr>
+  </table>
+  <p style="margin-top:1rem;color:var(--muted);font-size:0.9rem">
+    <strong>9</strong> done &bull; <strong>4</strong> partial &bull; <strong>3</strong> not started
+  </p>
+</div>
+
+<!-- ─── Decisions ─── -->
+<h2 id="decisions">Architecture Decisions</h2>
+<div class="decisions">
+  <div class="decision">
+    <h4>ADR-001: Metering Sweep Interval (60s)</h4>
+    <p>Balances freshness vs DB load. Matches the OSAC collector's emission interval. Sub-minute cost visibility.</p>
+  </div>
+  <div class="decision">
+    <h4>ADR-002: No Kafka (for PoC)</h4>
+    <p>SSE Watch stream + HTTP ingest is simpler and sufficient. Kafka adds operational complexity without PoC benefit. Easy to add later (~150 lines).</p>
+  </div>
+  <div class="decision">
+    <h4>ADR-003: Local Sweep vs Heartbeat Emitter</h4>
+    <p>Local sweep is zero-coordination. Heartbeat emitter requires transport agreement with OSAC. Both produce identical metering entries. Sweep for PoC, emitter for production.</p>
+  </div>
+  <div class="decision">
+    <h4>Rating: SQL for PoC, GoRules for Post-PoC</h4>
+    <p>SQL-based rates with JSON tiers handle flat + tiered pricing. GoRules/Zen adds visual rule editor for custom dimensions (REQ-13). Incremental migration via Loader pattern.</p>
+  </div>
+  <div class="decision">
+    <h4>Koku Alignment: cost_type + koku_metric</h4>
+    <p>Rate definitions carry Infrastructure/Supplementary classification and Koku metric name mapping. Enables eventual sync with Koku cost models.</p>
+  </div>
+  <div class="decision">
+    <h4>metering_entries as Interface Boundary</h4>
+    <p>All upstream sources (Watch, ingest, Kafka, sweep) write to the same table. All downstream consumers (rating, quotas, reports) read from it. Transport-agnostic by design.</p>
+  </div>
+</div>
+
+<p style="margin-top:3rem;color:var(--muted);font-size:0.8rem;text-align:center">
+  Cost Management AI Grid PoC &mdash; Generated from docs/diagrams/*.dot
+</p>
+
+</body>
+</html>

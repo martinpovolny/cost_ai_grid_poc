@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/osac-project/cost-event-consumer/internal/authn"
 	"github.com/osac-project/cost-event-consumer/internal/config"
 	"github.com/osac-project/cost-event-consumer/internal/ingest"
 	"github.com/osac-project/cost-event-consumer/internal/inventory"
@@ -98,7 +99,20 @@ func main() {
 
 	if cfg.IngestListenAddr != "" {
 		h := ingest.NewHandler(store, m, logger)
-		srv := &http.Server{Addr: cfg.IngestListenAddr, Handler: h.ServeMux()}
+
+		auth, err := authn.New(cfg.AuthIssuerURL, cfg.OSACCACert, logger)
+		if err != nil {
+			logger.Error("failed to create auth middleware", "error", err)
+			os.Exit(1)
+		}
+
+		srv := &http.Server{
+			Addr:           cfg.IngestListenAddr,
+			Handler:        auth.Wrap(h.ServeMux()),
+			ReadTimeout:    10 * time.Second,
+			WriteTimeout:   10 * time.Second,
+			MaxHeaderBytes: 1 << 20,
+		}
 		g.Go(func() error {
 			logger.Info("ingest endpoint listening", "addr", cfg.IngestListenAddr)
 			return srv.ListenAndServe()

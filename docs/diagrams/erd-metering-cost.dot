@@ -49,6 +49,8 @@ digraph erd_metering_cost {
             <TR><TD ALIGN="LEFT">tenant_id</TD><TD>TEXT</TD><TD>nullable</TD></TR>
             <TR><TD ALIGN="LEFT">resource_type</TD><TD>TEXT</TD><TD></TD></TR>
             <TR><TD ALIGN="LEFT">meter_name</TD><TD>TEXT</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">koku_metric</TD><TD>TEXT</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">cost_type</TD><TD>TEXT</TD><TD></TD></TR>
             <TR><TD ALIGN="LEFT">price_per_unit</TD><TD>NUMERIC(18,10)</TD><TD></TD></TR>
             <TR><TD ALIGN="LEFT">currency</TD><TD>TEXT</TD><TD></TD></TR>
             <TR><TD ALIGN="LEFT">tiers</TD><TD>JSONB</TD><TD>nullable</TD></TR>
@@ -91,8 +93,24 @@ digraph erd_metering_cost {
         </TABLE>
     >]
 
+    alerts [label=<
+        <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#FFF9C4">
+            <TR><TD COLSPAN="3" BGCOLOR="#FBC02D"><FONT COLOR="white"><B>alerts</B></FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><B>id</B></TD><TD>BIGSERIAL</TD><TD>PK</TD></TR>
+            <TR><TD ALIGN="LEFT">tenant_id</TD><TD>TEXT</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">meter_name</TD><TD>TEXT</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">threshold_pct</TD><TD>NUMERIC</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">consumed</TD><TD>NUMERIC</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">limit_value</TD><TD>NUMERIC</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">period</TD><TD>TEXT</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">state</TD><TD>TEXT</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">fired_at</TD><TD>TIMESTAMPTZ</TD><TD></TD></TR>
+        </TABLE>
+    >]
+
     // Data flow
     metering_entries -> cost_entries [label="rated by\n(rating sweep)" color="#F44336" fontcolor="#F44336"]
     rates -> cost_entries [label="rate applied" color="#9C27B0" fontcolor="#9C27B0"]
     metering_entries -> quotas [label="SUM() compared\nagainst limit" style=dashed color="#009688" fontcolor="#009688"]
+    quotas -> alerts [label="threshold\ncrossed" color="#FBC02D" fontcolor="#FBC02D"]
 }

@@ -15,6 +15,7 @@ type Config struct {
 	SummarizeInterval  time.Duration
 	LogLevel           string
 	IngestListenAddr   string
+	AuthIssuerURL      string
 }
 
 func Load() *Config {
@@ -27,6 +28,7 @@ func Load() *Config {
 		SummarizeInterval: durationOrDefault("SUMMARIZE_INTERVAL", 1*time.Hour),
 		LogLevel:          envOrDefault("LOG_LEVEL", "info"),
 		IngestListenAddr:  os.Getenv("INGEST_LISTEN_ADDR"),
+		AuthIssuerURL:    os.Getenv("AUTH_ISSUER_URL"),
 	}
 }
 

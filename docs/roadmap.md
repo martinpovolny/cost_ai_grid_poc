@@ -54,6 +54,13 @@ Push model (webhook) needs transport agreement with OSAC.
 
 **Why:** OSAC has a BareMetalInstance proto. Same pattern as VM metering.
 
+**Status update (Jun 29):** Previously blocked — BareMetalInstance is not
+in the public Watch stream oneOf but IS available via the public REST List
+API. Since our reconciler already polls all entity types on a timer, we can
+add BareMetalInstance to the reconciler without switching to the private
+stream. The Watch stream won't deliver BM events, but the periodic List
+sweep covers that gap — same as we do for InstanceTypes and Projects today.
+
 **What:**
 - Add `BareMetalInstance` to the Watch stream event dispatcher
 - `inventory_bare_metal_instance` table
@@ -153,6 +160,47 @@ The Watch stream stays for inventory sync. The metering sweep is replaced
 by the collector. The ingest endpoint becomes the single entry point for
 all metering data. Everything downstream (rating, quotas, reports) is
 unchanged.
+
+## Open Items
+
+### Private vs Public gRPC Watch Stream
+
+**Discovery (Jun 29, 2026):** The OSAC fulfillment-service has two event
+protos — public and private. The **public** oneOf has 10 entities (what we
+use today). The **private** oneOf has 28 entities, including all three
+catalog items (`ClusterCatalogItem`, `ComputeInstanceCatalogItem`,
+`BareMetalInstanceCatalogItem`), `BareMetalInstance`,
+`BareMetalInstanceTemplate`, `StorageBackend`, networking entities, and a
+new `EVENT_TYPE_OBJECT_SIGNALED` event type for reconciliation hints.
+
+**Implication:** Switching to the private Watch stream would unblock REQ-8
+(bare metal) and give us real-time catalog item events instead of
+poll-only. The code change is small (URL + additional struct/handler
+cases). The open question is **authorization** — confirm with OSAC team
+that our consumer is allowed to use the private API.
+
+**Action:** Ask OSAC team (Moti/Juan) whether cost-event-consumer can
+consume the private Watch stream. If yes, switch; if no, continue with
+public stream + REST List polling for catalog items.
+
+### Kafka as CloudEvents Transport
+
+**Assessment:** Adding a Kafka consumer is low complexity in our current
+architecture. The `handleEvent` function in the watcher takes a
+deserialized `osac.Event` struct — the transport is irrelevant downstream.
+A Kafka consumer would deserialize CloudEvents from a topic and feed them
+into the same `handleEvent`. No changes to metering, rating, inventory, or
+any downstream code.
+
+**Work estimate:**
+- Add `confluent-kafka-go` or `segmentio/kafka-go` dependency
+- New `kafkaconsumer` package (~100-150 lines): connect, subscribe,
+  deserialize, call `handleEvent`
+- Config: `KAFKA_BROKERS`, `KAFKA_TOPIC`, `KAFKA_GROUP_ID` env vars
+- Wire into `main.go` errgroup alongside the existing watcher
+
+The `metering_entries` table remains the interface boundary — it doesn't
+matter whether events arrive via Watch stream, HTTP ingest, or Kafka.
 
 ## Key Insight
 

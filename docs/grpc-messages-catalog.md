@@ -103,6 +103,25 @@ Our Go mapping: [`internal/osac/types.go`](../inventory-watcher/internal/osac/ty
 | Go type | [`internal/osac/types.go`](../inventory-watcher/internal/osac/types.go) → `Tenant` |
 | Handler | Logged but no inventory table (tenants tracked implicitly via resource ownership) |
 
+### BareMetalInstance
+
+| Field | Source |
+|---|---|
+| Proto definition | [baremetal_instance_type.proto](https://github.com/osac-project/fulfillment-service/blob/main/proto/public/osac/public/v1/baremetal_instance_type.proto) |
+| Go type | [`internal/osac/types.go`](../inventory-watcher/internal/osac/types.go) → `BareMetalInstance` |
+| Handler | Reconciler only (not in Watch stream `oneof`) |
+| Inventory table | `inventory_bare_metal_instance` |
+| Metering | `bm_uptime_seconds` |
+
+**Key fields consumed:**
+- `id` — instance UUID
+- `metadata.name`, `metadata.tenant`, `metadata.creation_timestamp`
+- `spec.catalog_item` — references BareMetalInstanceCatalogItem for specs
+- `status.state` — billable when `BARE_METAL_INSTANCE_STATE_RUNNING`
+
+**Note:** BareMetalInstance is NOT in the public Watch stream `oneof` payload.
+Inventory is synced via the reconciler polling `GET /api/fulfillment/v1/baremetal_instances`.
+
 ## Messages Received but Not Processed
 
 These appear in the Watch stream `oneof payload` but we only log them — no
@@ -142,10 +161,27 @@ message Metadata {
 | GET | `/api/fulfillment/v1/clusters` | [`ListClusters`](../inventory-watcher/internal/osac/client.go) | Reconcile cluster inventory |
 | GET | `/api/fulfillment/v1/instance_types` | [`ListInstanceTypes`](../inventory-watcher/internal/osac/client.go) | Sync instance type catalog |
 | GET | `/api/fulfillment/v1/projects` | [`ListProjects`](../inventory-watcher/internal/osac/client.go) | Sync project hierarchy |
+| GET | `/api/fulfillment/v1/baremetal_instances` | [`ListBareMetalInstances`](../inventory-watcher/internal/osac/client.go) | Reconcile bare metal inventory |
+
+### Pagination
+
+All List endpoints use `offset`/`limit` query parameters (defined in the
+OSAC proto). Our client pages through all results with `limit=100` until
+`offset >= total`.
+
+> **Known limitation:** OSAC only supports offset-based pagination, which
+> is an anti-pattern for changing datasets — resources created or deleted
+> between page fetches can cause items to be skipped or duplicated. The
+> better approach (cursor/keyset pagination) would require OSAC to add a
+> `continue` token or `after` parameter to the proto. For the PoC with
+> <100 resources this is not a practical problem; the reconciler runs
+> periodically and catches any missed items on the next cycle. For
+> production with thousands of resources, this should be raised with the
+> OSAC team.
 
 ## Messages Not Yet in OSAC (Mock Only)
 
 | Resource | Status | Our handling |
 |---|---|---|
 | Model (MaaS) | No proto, no API, no Watch stream events | Mock via HTTP ingest endpoint; see [req2 gap analysis](req2-maas-costing-gap-analysis.md) |
-| BareMetalInstance | [Proto exists](https://github.com/osac-project/fulfillment-service/blob/main/proto/public/osac/public/v1/baremetal_instance_type.proto), not yet in Watch stream `oneof` | Not implemented |
+| BareMetalInstance | [Proto exists](https://github.com/osac-project/fulfillment-service/blob/main/proto/public/osac/public/v1/baremetal_instance_type.proto), not in Watch stream `oneof` | Implemented via reconciler polling |

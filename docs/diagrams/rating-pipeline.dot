@@ -1,0 +1,120 @@
+// Rating Pipeline Detail
+// Shows rate lookup, flat/tiered pricing, cost_type split, Koku mapping
+
+digraph rating_pipeline {
+    graph [
+        rankdir=TB
+        fontname="Helvetica"
+        fontsize=14
+        label="Rating Pipeline — From Metering to Cost"
+        labelloc=t
+        bgcolor=white
+        pad=0.5
+        nodesep=0.5
+        ranksep=0.8
+    ]
+    node [fontname="Helvetica" fontsize=10]
+    edge [fontname="Helvetica" fontsize=9 color="#555555"]
+
+    // ── Input ──
+    metering [label=<
+        <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6" BGCOLOR="#E0E0E0">
+            <TR><TD COLSPAN="2" BGCOLOR="#616161"><FONT COLOR="white"><B>metering_entries</B></FONT></TD></TR>
+            <TR><TD ALIGN="LEFT">resource_type</TD><TD>compute_instance</TD></TR>
+            <TR><TD ALIGN="LEFT">meter_name</TD><TD>vm_cpu_core_seconds</TD></TR>
+            <TR><TD ALIGN="LEFT">tenant_id</TD><TD>tenant-globex</TD></TR>
+            <TR><TD ALIGN="LEFT">value</TD><TD>240.0</TD></TR>
+            <TR><TD ALIGN="LEFT">period</TD><TD>60s interval</TD></TR>
+        </TABLE>
+    > shape=plain]
+
+    // ── Rate Lookup ──
+    find_rate [label=<
+        <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6" BGCOLOR="#E8F5E9">
+            <TR><TD COLSPAN="2" BGCOLOR="#2E7D32"><FONT COLOR="white"><B>FindRate()</B></FONT></TD></TR>
+            <TR><TD COLSPAN="2" ALIGN="LEFT">1. Look for tenant-specific rate</TD></TR>
+            <TR><TD COLSPAN="2" ALIGN="LEFT">2. Fall back to global default</TD></TR>
+            <TR><TD COLSPAN="2" ALIGN="LEFT">3. Check effective date range</TD></TR>
+        </TABLE>
+    > shape=plain]
+
+    // ── Rate Tables ──
+    subgraph cluster_rates {
+        label=""
+        style=invis
+
+        rate_tenant [label=<
+            <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#C8E6C9">
+                <TR><TD COLSPAN="2" BGCOLOR="#43A047"><FONT COLOR="white"><B>Tenant Override</B></FONT></TD></TR>
+                <TR><TD ALIGN="LEFT">tenant_id</TD><TD>tenant-globex</TD></TR>
+                <TR><TD ALIGN="LEFT">price_per_unit</TD><TD>0.015/3600</TD></TR>
+                <TR><TD ALIGN="LEFT">cost_type</TD><TD>Supplementary</TD></TR>
+                <TR><TD ALIGN="LEFT">priority</TD><TD><B>1st (preferred)</B></TD></TR>
+            </TABLE>
+        > shape=plain]
+
+        rate_global [label=<
+            <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#E0E0E0">
+                <TR><TD COLSPAN="2" BGCOLOR="#757575"><FONT COLOR="white"><B>Global Default</B></FONT></TD></TR>
+                <TR><TD ALIGN="LEFT">tenant_id</TD><TD>NULL</TD></TR>
+                <TR><TD ALIGN="LEFT">price_per_unit</TD><TD>0.005/3600</TD></TR>
+                <TR><TD ALIGN="LEFT">cost_type</TD><TD>Supplementary</TD></TR>
+                <TR><TD ALIGN="LEFT">priority</TD><TD>2nd (fallback)</TD></TR>
+            </TABLE>
+        > shape=plain]
+    }
+
+    // ── Apply Rate ──
+    apply_rate [label=<
+        <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6" BGCOLOR="#FFF9C4">
+            <TR><TD COLSPAN="3" BGCOLOR="#F57F17"><FONT COLOR="white"><B>ApplyRate()</B></FONT></TD></TR>
+            <TR><TD COLSPAN="3" BGCOLOR="#FFF9C4"><B>Flat:</B> value × price_per_unit</TD></TR>
+            <TR><TD COLSPAN="3" BGCOLOR="#FFF9C4"><B>Tiered:</B> walk tier bands ↓</TD></TR>
+        </TABLE>
+    > shape=plain]
+
+    // ── Tier Bands ──
+    tiers [label=<
+        <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#FFF9C4">
+            <TR><TD COLSPAN="3" BGCOLOR="#FF8F00"><FONT COLOR="white"><B>Tiered Pricing Example (MaaS tokens_in)</B></FONT></TD></TR>
+            <TR><TD BGCOLOR="#E8F5E9"><B>Band</B></TD><TD BGCOLOR="#E8F5E9"><B>Range</B></TD><TD BGCOLOR="#E8F5E9"><B>Price/unit</B></TD></TR>
+            <TR><TD>Free tier</TD><TD>0 → 1,000,000</TD><TD>$0.00</TD></TR>
+            <TR><TD>Standard</TD><TD>1,000,000 → 10,000,000</TD><TD>$0.30/M</TD></TR>
+            <TR><TD>Volume</TD><TD>10,000,000 → ∞</TD><TD>$0.20/M</TD></TR>
+            <TR><TD COLSPAN="3" BGCOLOR="#FFF9C4"><I>15M tokens = 1M×$0 + 9M×$0.30/M + 5M×$0.20/M = $3.70</I></TD></TR>
+        </TABLE>
+    > shape=plain]
+
+    // ── Output ──
+    cost_entry [label=<
+        <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6" BGCOLOR="#E3F2FD">
+            <TR><TD COLSPAN="2" BGCOLOR="#1565C0"><FONT COLOR="white"><B>cost_entries</B></FONT></TD></TR>
+            <TR><TD ALIGN="LEFT">metered_value</TD><TD>240.0</TD></TR>
+            <TR><TD ALIGN="LEFT">cost_amount</TD><TD>$0.001000</TD></TR>
+            <TR><TD ALIGN="LEFT">cost_type</TD><TD>Supplementary</TD></TR>
+            <TR><TD ALIGN="LEFT">currency</TD><TD>USD</TD></TR>
+            <TR><TD ALIGN="LEFT">rate_id</TD><TD>→ tenant override</TD></TR>
+        </TABLE>
+    > shape=plain]
+
+    // ── Koku Mapping ──
+    koku [label=<
+        <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#F3E5F5">
+            <TR><TD COLSPAN="2" BGCOLOR="#7B1FA2"><FONT COLOR="white"><B>Koku Alignment</B></FONT></TD></TR>
+            <TR><TD ALIGN="LEFT">koku_metric</TD><TD>cpu_core_request_per_hour</TD></TR>
+            <TR><TD ALIGN="LEFT">cost_type</TD><TD>Infrastructure / Supplementary</TD></TR>
+            <TR><TD ALIGN="LEFT">unit conversion</TD><TD>per_second → per_hour (×3600)</TD></TR>
+        </TABLE>
+    > shape=plain]
+
+    // ── Edges ──
+    metering -> find_rate [label="unrated\nentry"]
+    find_rate -> rate_tenant [label="match?\n(tenant + meter)" color="#43A047" fontcolor="#43A047"]
+    find_rate -> rate_global [label="fallback\n(global)" style=dashed]
+    rate_tenant -> apply_rate [label="selected\nrate"]
+    rate_global -> apply_rate [style=dashed label="if no\noverride"]
+    apply_rate -> tiers [label="if tiers\ndefined" style=dashed]
+    apply_rate -> cost_entry [label="cost =\nvalue × rate"]
+    tiers -> cost_entry [label="cost =\nΣ band costs" style=dashed]
+    cost_entry -> koku [label="report\nmapping" style=dotted color="#7B1FA2" fontcolor="#7B1FA2"]
+}

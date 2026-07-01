@@ -1,0 +1,126 @@
+// Production Target Architecture
+// Shows planned evolution: private stream, Kafka, catalog sync, GoRules
+
+digraph architecture_production {
+    graph [
+        rankdir=LR
+        fontname="Helvetica"
+        fontsize=14
+        label="Cost Event Consumer — Production Target"
+        labelloc=t
+        bgcolor=white
+        pad=0.5
+        nodesep=0.6
+        ranksep=1.2
+        compound=true
+    ]
+    node [fontname="Helvetica" fontsize=10]
+    edge [fontname="Helvetica" fontsize=9 color="#555555"]
+
+    // ── OSAC ──
+    subgraph cluster_osac {
+        label="OSAC Fulfillment Service"
+        style=filled
+        fillcolor="#E3F2FD"
+        color="#1565C0"
+        fontcolor="#1565C0"
+        fontsize=12
+
+        osac_private [label="Private Watch Stream\n28 entity types\n+ SIGNALED events" shape=box style="filled,rounded" fillcolor="#64B5F6" color="#1565C0"]
+        osac_rest [label="REST List APIs\ncatalog items\nbare metal\nall entities" shape=box style="filled,rounded" fillcolor="#90CAF9" color="#1565C0"]
+        osac_collector [label="OSAC Metering\nCollector\n(heartbeats)" shape=box style="filled,rounded" fillcolor="#64B5F6" color="#1565C0"]
+        osac_webhook [label="OSAC Alert\nWebhook Endpoint" shape=box style="filled,rounded" fillcolor="#90CAF9" color="#1565C0"]
+    }
+
+    // ── Kafka ──
+    subgraph cluster_kafka {
+        label="Event Transport (Kafka)"
+        style="filled,dashed"
+        fillcolor="#FFF3E0"
+        color="#E65100"
+        fontcolor="#E65100"
+        fontsize=12
+
+        kafka_topic [label="CloudEvents Topic\nosac.events.*" shape=box style="filled,rounded" fillcolor="#FFE0B2" color="#E65100"]
+    }
+
+    // ── Cost Event Consumer ──
+    subgraph cluster_consumer {
+        label="Cost Event Consumer (Go)"
+        style=filled
+        fillcolor="#E8F5E9"
+        color="#2E7D32"
+        fontcolor="#2E7D32"
+        fontsize=12
+
+        watcher [label="Watcher\nreal-time events\n(inventory sync only)" shape=box style="filled,rounded" fillcolor="#A5D6A7" color="#2E7D32"]
+        reconciler [label="Reconciler\nall entities +\ncatalog items\nbare metal" shape=box style="filled,rounded" fillcolor="#A5D6A7" color="#2E7D32"]
+        kafka_consumer [label="Kafka Consumer\nCloudEvents\ndeserialization" shape=box style="filled,dashed,rounded" fillcolor="#C8E6C9" color="#2E7D32"]
+        ingest [label="Ingest API\nPOST /api/v1/events\n(CloudEvents)" shape=box style="filled,rounded" fillcolor="#81C784" color="#2E7D32"]
+        gorules [label="GoRules/Zen\nRating Engine\nJDM visual rules" shape=box style="filled,dashed,rounded" fillcolor="#C8E6C9" color="#2E7D32"]
+        rating_sweep [label="Rating Sweep\ncustom dimensions\nper-tenant rules" shape=box style="filled,rounded" fillcolor="#A5D6A7" color="#2E7D32"]
+        alert_push [label="Alert Push\nwebhook POST\non threshold cross" shape=box style="filled,rounded" fillcolor="#A5D6A7" color="#2E7D32"]
+        quota_api [label="Quota API\nGET /quotas/{tenant}" shape=box style="filled,rounded" fillcolor="#81C784" color="#2E7D32"]
+        report_api [label="Report API\nGET /reports/costs\nJSON + CSV export" shape=box style="filled,dashed,rounded" fillcolor="#C8E6C9" color="#2E7D32"]
+    }
+
+    // ── Data Stores ──
+    subgraph cluster_db {
+        label="Cost Database"
+        style=filled
+        fillcolor="#F5F5F5"
+        color="#616161"
+        fontcolor="#616161"
+        fontsize=12
+
+        inventory [label="inventory_*\ncompute | cluster\nbare_metal | model\ncatalog_items" shape=cylinder style=filled fillcolor="#E0E0E0" color="#616161"]
+        metering [label="metering_entries\n(partitioned by month)" shape=cylinder style=filled fillcolor="#E0E0E0" color="#616161"]
+        costs [label="cost_entries\n(partitioned)" shape=cylinder style=filled fillcolor="#E0E0E0" color="#616161"]
+        rules [label="rates + JDM rules\nGoRules JSON\nper-tenant overrides" shape=cylinder style=filled fillcolor="#E0E0E0" color="#616161"]
+    }
+
+    // ── External ──
+    rhoai [label="OpenShift AI\n(RHOAI)\nmodel inference" shape=box style="filled,rounded" fillcolor="#E1F5FE" color="#0277BD"]
+    koku [label="Koku\n(cost model sync)" shape=box style="filled,dashed" fillcolor="#F3E5F5" color="#7B1FA2"]
+
+    // ── Edges: OSAC → Consumer ──
+    osac_private -> watcher [label="SSE\n28 entities" color="#1565C0" fontcolor="#1565C0"]
+    osac_rest -> reconciler [label="List all +\ncatalog items" color="#1565C0" fontcolor="#1565C0"]
+    osac_collector -> kafka_topic [label="publish\nCloudEvents" color="#E65100" fontcolor="#E65100"]
+    osac_collector -> ingest [label="POST\n(fallback)" style=dashed color="#1565C0" fontcolor="#1565C0"]
+
+    kafka_topic -> kafka_consumer [label="consume" color="#E65100" fontcolor="#E65100"]
+
+    // ── Consumer internals ──
+    watcher -> inventory [label="sync"]
+    reconciler -> inventory [label="sync"]
+    kafka_consumer -> metering [label="insert" style=dashed]
+    ingest -> metering [label="insert"]
+
+    rating_sweep -> metering [label="read" dir=back]
+    rating_sweep -> gorules [label="evaluate" style=dashed]
+    gorules -> rules [label="load\nJDM rules" dir=back style=dashed]
+    rating_sweep -> rules [label="FindRate()" dir=back]
+    rating_sweep -> costs [label="insert"]
+
+    alert_push -> osac_webhook [label="POST\nthreshold alert" color="#C62828" fontcolor="#C62828"]
+    quota_api -> costs [label="sum" dir=back]
+    report_api -> costs [label="query" dir=back style=dashed]
+
+    // ── External feeds ──
+    rhoai -> osac_collector [label="MaaS metrics" color="#0277BD" fontcolor="#0277BD"]
+    koku -> rules [label="rate sync" style=dashed color="#7B1FA2" fontcolor="#7B1FA2"]
+
+    // ── Legend ──
+    subgraph cluster_legend {
+        label="Legend"
+        style=filled
+        fillcolor=white
+        color="#BDBDBD"
+        fontsize=10
+
+        leg_solid [label="Implemented" shape=box style="filled,rounded" fillcolor="#A5D6A7" color="#2E7D32" fontsize=9]
+        leg_dashed [label="Planned" shape=box style="filled,dashed,rounded" fillcolor="#C8E6C9" color="#2E7D32" fontsize=9]
+        leg_solid -> leg_dashed [style=invis]
+    }
+}

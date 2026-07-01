@@ -50,6 +50,12 @@ func (s *Summarizer) SummarizeDate(ctx context.Context, date time.Time) error {
 		return err
 	}
 
+	allTypes, _ := s.store.ListAllInstanceTypes(ctx)
+	typeMap := make(map[string]*inventory.InstanceTypeRecord, len(allTypes))
+	for i := range allTypes {
+		typeMap[allTypes[i].InstanceTypeID] = &allTypes[i]
+	}
+
 	count := 0
 	for _, inst := range instances {
 		effectiveStart := inst.CreatedAt
@@ -71,9 +77,8 @@ func (s *Summarizer) SummarizeDate(ctx context.Context, date time.Time) error {
 		cores := inst.Cores
 		memGiB := inst.MemoryGiB
 
-		// If cores/memory not directly on the instance, try instance type lookup.
 		if cores == 0 && inst.InstanceType != "" {
-			if it, err := s.store.GetInstanceType(ctx, inst.InstanceType); err == nil {
+			if it, ok := typeMap[inst.InstanceType]; ok {
 				cores = it.Cores
 				memGiB = it.MemoryGiB
 			}

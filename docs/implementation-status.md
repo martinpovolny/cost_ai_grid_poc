@@ -9,10 +9,10 @@
 | Priority | Total | Done | Partial | Not Started |
 |---|---|---|---|---|
 | CRITICAL | 5 | 4 | 0 | 1 |
-| HIGH | 8 | 4 | 2 | 2 |
+| HIGH | 8 | 5 | 2 | 1 |
 | MEDIUM | 2 | 0 | 2 | 0 |
 | Must Have | 1 | 1 | 0 | 0 |
-| **Total** | **16** | **9** | **4** | **3** |
+| **Total** | **16** | **10** | **4** | **2** |
 
 ## Full Requirements Status
 
@@ -30,7 +30,7 @@
 | REQ-3b | MEDIUM | Service catalog sync | Partial | — | Instance types synced, rates manual |
 | REQ-4 | HIGH | Token metering | **Done** (mock) | OSAC MaaS schema | [req2 gap analysis](req2-maas-costing-gap-analysis.md) |
 | REQ-5 | MEDIUM | Chargeback reporting | Partial | — | SQL queries, no formatted export |
-| REQ-8 | HIGH | Bare metal costing | Not started | OSAC: not in Watch `oneof` | [req8 gap analysis](req8-bare-metal-gap-analysis.md) |
+| REQ-8 | HIGH | Bare metal costing | **Done** | Watch `oneof` gap — uses reconciler | [req8 gap analysis](req8-bare-metal-gap-analysis.md) |
 | REQ-9 | HIGH | Quota/budget status API | **Done** | — | `GET /api/v1/quotas/{tenant_id}` |
 | REQ-10 | HIGH | Threshold notifications | **Done** (pull) | Webhook push deferred | [req10 analysis](req10-threshold-notifications-analysis.md) |
 | REQ-11 | MUST HAVE | Cost tiers | **Done** | — | Tiered pricing in rate engine |
@@ -41,7 +41,7 @@
 
 | Req | Priority | Title | Status | Notes |
 |---|---|---|---|---|
-| REQ-6 | STANDARD | Security & access control | N/A | In-product |
+| REQ-6 | STANDARD | Security & access control | Partial | Authn done, authz gap |
 | REQ-7 | STANDARD | Reconciliation & auditing | Partial | `raw_events` = immutable audit trail |
 
 ---
@@ -281,11 +281,71 @@ See [`snippets/query-costs.sh`](../snippets/query-costs.sh) for demo queries.
 
 ---
 
+## Authentication & Authorization
+
+### Authentication (authn) — Implemented
+
+JWT bearer token validation, compatible with OSAC's auth model. Uses the
+same `golang-jwt/jwt/v5` library and validates against the same OIDC/JWKS
+endpoint that OSAC uses. The same token works for both OSAC API calls and
+our endpoints.
+
+**Implementation:** [`internal/authn/middleware.go`](../inventory-watcher/internal/authn/middleware.go)
+
+**How it works:**
+1. On startup, fetches JWKS public keys from the OIDC issuer
+2. On each request, validates the JWT signature, expiry, and issuer
+3. Stores claims in request context for downstream use
+4. Health endpoint (`/api/v1/health`) is always unauthenticated
+
+**Quick start:**
+```bash
+# Disabled by default (PoC) — all requests pass through:
+INGEST_LISTEN_ADDR=localhost:8020 ./inventory-watcher
+
+# Enabled — requires valid JWT token on all requests:
+AUTH_ISSUER_URL=https://localhost:8013 \
+OSAC_CA_CERT=/path/to/server.crt \
+INGEST_LISTEN_ADDR=localhost:8020 \
+./inventory-watcher
+```
+
+When enabled, all requests must include `Authorization: Bearer <token>`.
+Generate a token with `scripts/gen_token.py` (same token used for OSAC).
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `AUTH_ISSUER_URL` | (empty = disabled) | OIDC issuer URL (e.g., `https://localhost:8013`) |
+| `OSAC_CA_CERT` | (empty) | CA certificate for TLS verification of the OIDC endpoint |
+
+### Authorization (authz) — Gap
+
+OSAC uses OPA (Open Policy Agent) with embedded Rego policies for
+per-request authorization: "is this user allowed to do this operation on
+this resource in this tenant?" We do not implement authz.
+
+**Current gap:**
+- Any authenticated user can query any tenant's quota status
+- Any authenticated user can ingest events for any tenant
+- No tenant-scoping based on JWT claims
+
+**When needed:** When the system is exposed to multiple users with
+different tenant access. For the PoC with a single admin token, authn
+alone is sufficient.
+
+**Path to implementation:** Extract `tenants` from JWT claims (OSAC's
+`Subject` model), compare against the `tenant_id` in the request. Reject
+if the user doesn't have access to the requested tenant.
+
+---
+
 ## Future Work (Post-PoC)
 
 | Req | Title | Status | Notes |
 |---|---|---|---|
-| [REQ-6](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-6--platform-security--access-control) | Security & Access Control | N/A | In-product, no gap |
+| [REQ-6](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-6--platform-security--access-control) | Security & Access Control | Partial | Authn done, authz gap |
 | [REQ-7](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-7--reconciliation-auditing--dispute-tracing) | Reconciliation & Auditing | Partial | `raw_events` provides immutable audit trail |
 | [REQ-12](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-12--daily-openshift-virtualization-costs) | Daily OCP Virt Costs | TBD | Pending PM confirmation |
 

@@ -1,0 +1,108 @@
+// Current PoC Architecture
+// cost-event-consumer integrating with OSAC fulfillment-service
+
+digraph architecture_poc {
+    graph [
+        rankdir=LR
+        fontname="Helvetica"
+        fontsize=14
+        label="Cost Event Consumer — PoC Architecture (Current)"
+        labelloc=t
+        bgcolor=white
+        pad=0.5
+        nodesep=0.6
+        ranksep=1.2
+        compound=true
+    ]
+    node [fontname="Helvetica" fontsize=10]
+    edge [fontname="Helvetica" fontsize=9 color="#555555"]
+
+    // ── OSAC Cluster ──
+    subgraph cluster_osac {
+        label="OSAC Fulfillment Service"
+        style=filled
+        fillcolor="#E3F2FD"
+        color="#1565C0"
+        fontcolor="#1565C0"
+        fontsize=12
+
+        osac_db [label="OSAC\nPostgreSQL" shape=cylinder style=filled fillcolor="#BBDEFB" color="#1565C0"]
+        osac_watch [label="Watch Stream\n(public API)\n10 entity types" shape=box style="filled,rounded" fillcolor="#90CAF9" color="#1565C0"]
+        osac_rest [label="REST List APIs\nGET /api/fulfillment/v1/*" shape=box style="filled,rounded" fillcolor="#90CAF9" color="#1565C0"]
+        osac_api [label="OSAC\nREST Gateway\n:8011" shape=box style="filled,rounded" fillcolor="#64B5F6" color="#1565C0"]
+
+        osac_db -> osac_watch [style=invis]
+        osac_db -> osac_rest [style=invis]
+        osac_api -> osac_watch [dir=back label="SSE stream"]
+        osac_api -> osac_rest [dir=back label="pagination"]
+    }
+
+    // ── Cost Event Consumer ──
+    subgraph cluster_consumer {
+        label="Cost Event Consumer (Go)"
+        style=filled
+        fillcolor="#E8F5E9"
+        color="#2E7D32"
+        fontcolor="#2E7D32"
+        fontsize=12
+
+        watcher [label="Watcher\nreal-time events" shape=box style="filled,rounded" fillcolor="#A5D6A7" color="#2E7D32"]
+        reconciler [label="Reconciler\nperiodic List\n(every 5m)" shape=box style="filled,rounded" fillcolor="#A5D6A7" color="#2E7D32"]
+        ingest [label="Ingest API\nPOST /api/v1/events\n(CloudEvents)" shape=box style="filled,rounded" fillcolor="#81C784" color="#2E7D32"]
+        meter_sweep [label="Metering Sweep\n(every 60s)" shape=box style="filled,rounded" fillcolor="#A5D6A7" color="#2E7D32"]
+        rating_sweep [label="Rating Sweep\n(every 30s)" shape=box style="filled,rounded" fillcolor="#A5D6A7" color="#2E7D32"]
+        quota_api [label="Quota API\nGET /quotas/{tenant}" shape=box style="filled,rounded" fillcolor="#81C784" color="#2E7D32"]
+        alert_eval [label="Threshold\nEvaluation\n(50/70/90/100%)" shape=box style="filled,rounded" fillcolor="#A5D6A7" color="#2E7D32"]
+    }
+
+    // ── Data Stores ──
+    subgraph cluster_db {
+        label="Cost Database (PostgreSQL :5434)"
+        style=filled
+        fillcolor="#F5F5F5"
+        color="#616161"
+        fontcolor="#616161"
+        fontsize=12
+
+        raw_events [label="raw_events\n(immutable audit)" shape=cylinder style=filled fillcolor="#E0E0E0" color="#616161"]
+        inventory [label="inventory_*\ncompute_instance\ncluster | project\ninstance_type | model" shape=cylinder style=filled fillcolor="#E0E0E0" color="#616161"]
+        metering [label="metering_entries\nresource × meter × period" shape=cylinder style=filled fillcolor="#E0E0E0" color="#616161"]
+        costs [label="cost_entries\nmetered_value × rate\n→ cost_amount" shape=cylinder style=filled fillcolor="#E0E0E0" color="#616161"]
+        rates [label="rates\nflat + tiered pricing\nper-tenant overrides" shape=cylinder style=filled fillcolor="#E0E0E0" color="#616161"]
+        quotas [label="quotas + alerts\nper-tenant limits\nthreshold tracking" shape=cylinder style=filled fillcolor="#E0E0E0" color="#616161"]
+    }
+
+    // ── External ──
+    maas_sim [label="MaaS Simulator\n(mock CloudEvents)" shape=box style="filled,dashed" fillcolor="#FFF9C4" color="#F57F17"]
+    user [label="OSAC /\nDashboard" shape=box style="filled,rounded" fillcolor="#E1F5FE" color="#0277BD"]
+
+    // ── Edges ──
+    osac_watch -> watcher [label="SSE\nevents" color="#1565C0" fontcolor="#1565C0"]
+    osac_rest -> reconciler [label="List all\nresources" color="#1565C0" fontcolor="#1565C0"]
+
+    watcher -> raw_events [label="store"]
+    watcher -> inventory [label="upsert/\ndelete"]
+    reconciler -> inventory [label="upsert/\ndelete"]
+
+    ingest -> raw_events [label="store"]
+    ingest -> metering [label="insert"]
+    ingest -> inventory [label="upsert"]
+
+    meter_sweep -> inventory [label="read\nbillable" dir=back]
+    meter_sweep -> metering [label="insert\nentries"]
+
+    rating_sweep -> metering [label="read\nunrated" dir=back]
+    rating_sweep -> rates [label="FindRate()" dir=back]
+    rating_sweep -> costs [label="insert"]
+    rating_sweep -> alert_eval [label="trigger"]
+
+    alert_eval -> quotas [label="check\nthresholds"]
+    alert_eval -> costs [label="sum\nconsumed" dir=back]
+
+    quota_api -> quotas [label="read" dir=back]
+    quota_api -> costs [label="sum" dir=back]
+
+    maas_sim -> ingest [label="POST\nCloudEvents" color="#F57F17" fontcolor="#F57F17"]
+    user -> quota_api [label="GET" color="#0277BD" fontcolor="#0277BD"]
+    user -> osac_api [label="create/delete\nresources" color="#0277BD" fontcolor="#0277BD"]
+}

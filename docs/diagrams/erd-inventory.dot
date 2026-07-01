@@ -113,12 +113,29 @@ digraph erd_inventory {
         </TABLE>
     >]
 
+    inventory_bare_metal_instance [label=<
+        <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#E8F5E9">
+            <TR><TD COLSPAN="3" BGCOLOR="#4CAF50"><FONT COLOR="white"><B>inventory_bare_metal_instance</B></FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><B>instance_id</B></TD><TD>TEXT</TD><TD>PK</TD></TR>
+            <TR><TD ALIGN="LEFT">name</TD><TD>TEXT</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">tenant</TD><TD>TEXT</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">catalog_item</TD><TD>TEXT</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">state</TD><TD>TEXT</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">labels</TD><TD>JSONB</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">created_at</TD><TD>TIMESTAMPTZ</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">deleted_at</TD><TD>TIMESTAMPTZ</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">last_metered_at</TD><TD>TIMESTAMPTZ</TD><TD></TD></TR>
+        </TABLE>
+    >]
+
     // Relationships
     inventory_project -> inventory_compute_instance [label="tenant" style=dashed]
     inventory_project -> inventory_model [label="tenant" style=dashed]
     inventory_project -> inventory_cluster [label="tenant" style=dashed]
+    inventory_project -> inventory_bare_metal_instance [label="tenant" style=dashed]
     inventory_instance_type -> inventory_compute_instance [label="instance_type" style=dashed]
     raw_events -> inventory_compute_instance [label="produces\n(CREATED/UPDATED)" style=dotted color="#999999"]
     raw_events -> inventory_cluster [label="produces" style=dotted color="#999999"]
     raw_events -> inventory_model [label="produces" style=dotted color="#999999"]
+    raw_events -> inventory_bare_metal_instance [label="produces\n(reconciler)" style=dotted color="#999999"]
 }

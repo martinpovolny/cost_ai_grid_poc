@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rating Engine Demo — Cost Event Consumer</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --card: #ffffff;
+    --border: #e0e0e0;
+    --text: #212121;
+    --muted: #757575;
+    --accent: #1565C0;
+    --green: #2E7D32;
+    --orange: #E65100;
+    --purple: #7B1FA2;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 2rem;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.8rem; margin-bottom: 0.5rem; color: var(--accent); }
+  h2 {
+    font-size: 1.2rem;
+    margin: 2.5rem 0 0.8rem;
+    color: white;
+    background: var(--accent);
+    padding: 0.5rem 1rem;
+    border-radius: 6px 6px 0 0;
+  }
+  h2 .act { opacity: 0.7; font-weight: 400; }
+  h3 { font-size: 1rem; margin: 1rem 0 0.5rem; color: var(--muted); }
+  p { margin-bottom: 0.8rem; }
+  .subtitle { color: var(--muted); font-size: 0.95rem; margin-bottom: 2rem; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 0 0 8px 8px;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    margin: 0.8rem 0;
+  }
+  th, td {
+    padding: 0.5rem 0.7rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th { background: #f5f5f5; font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+  td.num { text-align: right; font-family: "SF Mono", "Fira Code", monospace; font-size: 0.85rem; }
+  .highlight { background: #E8F5E9; }
+  .highlight-orange { background: #FFF3E0; }
+  .highlight-purple { background: #F3E5F5; }
+  .math {
+    background: #f5f5f5;
+    border-left: 3px solid var(--accent);
+    padding: 0.8rem 1rem;
+    margin: 1rem 0;
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.85rem;
+    line-height: 1.8;
+    border-radius: 0 4px 4px 0;
+  }
+  .tier-bar {
+    display: flex;
+    height: 40px;
+    border-radius: 6px;
+    overflow: hidden;
+    margin: 1rem 0;
+    border: 1px solid var(--border);
+  }
+  .tier-band {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: white;
+  }
+  .tier-free { background: #4CAF50; }
+  .tier-standard { background: #FF9800; }
+  .tier-volume { background: #2196F3; }
+  .comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1rem 0;
+  }
+  .comparison-card {
+    background: #f5f5f5;
+    border-radius: 6px;
+    padding: 1rem;
+    text-align: center;
+  }
+  .comparison-card.premium { border: 2px solid var(--orange); background: #FFF8E1; }
+  .comparison-card .tenant { font-weight: 700; font-size: 1rem; margin-bottom: 0.3rem; }
+  .comparison-card .rate-label { color: var(--muted); font-size: 0.8rem; }
+  .comparison-card .cost-value { font-size: 1.8rem; font-weight: 700; margin: 0.5rem 0; }
+  .comparison-card .cost-value.premium-cost { color: var(--orange); }
+  .cost-type-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1rem 0;
+  }
+  .cost-type-box {
+    border-radius: 6px;
+    padding: 1rem;
+    text-align: center;
+  }
+  .cost-type-box.infra { background: #E3F2FD; border: 2px solid var(--accent); }
+  .cost-type-box.supp { background: #F3E5F5; border: 2px solid var(--purple); }
+  .cost-type-box .label { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem; }
+  .cost-type-box .amount { font-size: 1.6rem; font-weight: 700; }
+  .cost-type-box .desc { font-size: 0.78rem; color: var(--muted); margin-top: 0.3rem; }
+  .infra .label { color: var(--accent); }
+  .supp .label { color: var(--purple); }
+  .back-link { color: var(--accent); text-decoration: none; font-size: 0.9rem; }
+  .back-link:hover { text-decoration: underline; }
+  code {
+    background: #f0f0f0;
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.85rem;
+  }
+  .tag {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .tag-infra { background: #BBDEFB; color: #0D47A1; }
+  .tag-supp { background: #E1BEE7; color: #4A148C; }
+</style>
+</head>
+<body>
+
+<a href="demo-architecture.html" class="back-link">&larr; Architecture Overview</a>
+
+<h1>Rating Engine Demo</h1>
+<p class="subtitle">
+  Demonstrating flat rates, tiered pricing, per-tenant overrides, and Koku-compatible cost classification.
+  <br>All data from a live run of <code>snippets/demo-rating-features.sh</code>.
+</p>
+
+<!-- ═══ ACT 1: Default Flat Rates ═══ -->
+<h2><span class="act">Act 1:</span> Default Flat Rates</h2>
+<div class="card">
+  <p>The system seeds 8 default rates on first startup. Each rate carries a <strong>cost_type</strong> (Infrastructure or Supplementary) and a <strong>koku_metric</strong> name for compatibility with Red Hat Cost Management (Koku).</p>
+
+  <table>
+    <tr><th>Resource Type</th><th>Meter Name</th><th>Cost Type</th><th>Koku Metric</th><th style="text-align:right">Price/Unit</th><th>Currency</th></tr>
+    <tr><td>compute_instance</td><td>vm_uptime_seconds</td><td><span class="tag tag-infra">Infrastructure</span></td><td>vm_cost_per_hour</td><td class="num">$0.01/hr</td><td>USD</td></tr>
+    <tr><td>compute_instance</td><td>vm_cpu_core_seconds</td><td><span class="tag tag-supp">Supplementary</span></td><td>cpu_core_request_per_hour</td><td class="num">$0.005/hr</td><td>USD</td></tr>
+    <tr><td>compute_instance</td><td>vm_memory_gib_seconds</td><td><span class="tag tag-supp">Supplementary</span></td><td>memory_gb_request_per_hour</td><td class="num">$0.002/hr</td><td>USD</td></tr>
+    <tr><td>cluster</td><td>cluster_uptime_seconds</td><td><span class="tag tag-infra">Infrastructure</span></td><td>cluster_cost_per_hour</td><td class="num">$0.50/hr</td><td>USD</td></tr>
+    <tr><td>cluster</td><td>cluster_worker_node_seconds</td><td><span class="tag tag-infra">Infrastructure</span></td><td>node_cost_per_month</td><td class="num">$0.10/hr</td><td>USD</td></tr>
+    <tr><td>model</td><td>maas_tokens_in</td><td><span class="tag tag-supp">Supplementary</span></td><td>&mdash;</td><td class="num">$0.50/M</td><td>USD</td></tr>
+    <tr><td>model</td><td>maas_tokens_out</td><td><span class="tag tag-supp">Supplementary</span></td><td>&mdash;</td><td class="num">$1.50/M</td><td>USD</td></tr>
+    <tr><td>model</td><td>maas_requests</td><td><span class="tag tag-supp">Supplementary</span></td><td>&mdash;</td><td class="num">$5.00/M</td><td>USD</td></tr>
+  </table>
+  <p style="color:var(--muted);font-size:0.85rem">These are global rates (tenant_id = NULL) &mdash; they apply to all tenants unless a tenant-specific override exists.</p>
+</div>
+
+<!-- ═══ ACT 2: Flat Rate Calculation ═══ -->
+<h2><span class="act">Act 2:</span> Flat Rate Calculation</h2>
+<div class="card">
+  <p>A VM heartbeat event arrives: <strong>4 cores, 16 GiB, running for 60 seconds</strong>. The metering pipeline produces three entries, and the rating sweep applies flat rates to each.</p>
+
+  <table>
+    <tr><th>Meter</th><th style="text-align:right">Metered Value</th><th>Unit</th><th style="text-align:right">Rate</th><th style="text-align:right">Cost</th></tr>
+    <tr><td>vm_uptime_seconds</td><td class="num">60.00</td><td>seconds</td><td class="num">$0.01/3600</td><td class="num highlight">$0.000167</td></tr>
+    <tr><td>vm_cpu_core_seconds</td><td class="num">240.00</td><td>core&middot;seconds</td><td class="num">$0.005/3600</td><td class="num highlight">$0.000333</td></tr>
+    <tr><td>vm_memory_gib_seconds</td><td class="num">960.00</td><td>GiB&middot;seconds</td><td class="num">$0.002/3600</td><td class="num highlight">$0.000533</td></tr>
+  </table>
+
+  <div class="math">
+    vm_uptime_seconds &nbsp;&nbsp;&nbsp;= 60s &times; $0.01/3600 &nbsp;= <strong>$0.000167</strong><br>
+    vm_cpu_core_seconds &nbsp;= 240 core&middot;s &times; $0.005/3600 = <strong>$0.000333</strong> &nbsp;(4 cores &times; 60s)<br>
+    vm_memory_gib_seconds = 960 GiB&middot;s &times; $0.002/3600 = <strong>$0.000533</strong> &nbsp;(16 GiB &times; 60s)
+  </div>
+</div>
+
+<!-- ═══ ACT 3: Per-Tenant Rate Override ═══ -->
+<h2><span class="act">Act 3:</span> Per-Tenant Rate Override</h2>
+<div class="card">
+  <p>Tenant <strong>Globex</strong> gets a premium CPU rate &mdash; 3&times; the default. When <code>FindRate()</code> looks up the rate, it finds the tenant-specific override and uses it instead of the global default.</p>
+
+  <table>
+    <tr><th>Scope</th><th>Meter</th><th style="text-align:right">Price/Unit</th><th>Description</th></tr>
+    <tr><td>Global default</td><td>vm_cpu_core_seconds</td><td class="num">$0.005/hr</td><td>&mdash;</td></tr>
+    <tr class="highlight-orange"><td><strong>tenant-globex</strong></td><td>vm_cpu_core_seconds</td><td class="num"><strong>$0.015/hr</strong></td><td>Premium CPU rate for Globex</td></tr>
+  </table>
+
+  <h3>Same workload, different costs</h3>
+  <p>Both tenants run an identical VM (4 cores, 60 seconds = 240 core&middot;seconds):</p>
+
+  <div class="comparison">
+    <div class="comparison-card">
+      <div class="tenant">tenant-acme</div>
+      <div class="rate-label">Global default rate</div>
+      <div class="cost-value">$0.000333</div>
+      <div class="rate-label">240 &times; $0.005/3600</div>
+    </div>
+    <div class="comparison-card premium">
+      <div class="tenant">tenant-globex</div>
+      <div class="rate-label">Tenant override (3&times;)</div>
+      <div class="cost-value premium-cost">$0.001000</div>
+      <div class="rate-label">240 &times; $0.015/3600</div>
+    </div>
+  </div>
+
+  <p style="color:var(--muted);font-size:0.85rem"><code>FindRate()</code> query: <code>ORDER BY tenant_id NULLS LAST</code> &mdash; tenant-specific rates always take priority.</p>
+</div>
+
+<!-- ═══ ACT 4: Tiered Pricing ═══ -->
+<h2><span class="act">Act 4:</span> Tiered Pricing</h2>
+<div class="card">
+  <p>MaaS token pricing with volume discounts &mdash; a free tier, a standard tier, and a discounted volume tier:</p>
+
+  <div class="tier-bar">
+    <div class="tier-band tier-free" style="flex: 1">Free<br>0 &ndash; 1M</div>
+    <div class="tier-band tier-standard" style="flex: 9">Standard: $0.30/M<br>1M &ndash; 10M</div>
+    <div class="tier-band tier-volume" style="flex: 5">Volume: $0.20/M<br>10M+</div>
+  </div>
+
+  <h3>Three scenarios</h3>
+  <table>
+    <tr><th>Scenario</th><th style="text-align:right">Tokens In</th><th>Tier Breakdown</th><th style="text-align:right">Cost</th></tr>
+    <tr>
+      <td>Small usage</td>
+      <td class="num">500,000</td>
+      <td>All in free tier</td>
+      <td class="num highlight"><strong>$0.00</strong></td>
+    </tr>
+    <tr>
+      <td>Medium usage</td>
+      <td class="num">5,000,000</td>
+      <td>1M free + 4M &times; $0.30/M</td>
+      <td class="num highlight"><strong>$1.20</strong></td>
+    </tr>
+    <tr>
+      <td>Large usage</td>
+      <td class="num">15,000,000</td>
+      <td>1M free + 9M &times; $0.30/M + 5M &times; $0.20/M</td>
+      <td class="num highlight"><strong>$3.70</strong></td>
+    </tr>
+  </table>
+
+  <div class="math">
+    <strong>Large usage breakdown:</strong><br>
+    &nbsp;&nbsp;Free tier: &nbsp;&nbsp;1,000,000 &times; $0.00 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= $0.00<br>
+    &nbsp;&nbsp;Standard: &nbsp;&nbsp;9,000,000 &times; $0.0000003 = $2.70<br>
+    &nbsp;&nbsp;Volume: &nbsp;&nbsp;&nbsp;&nbsp;5,000,000 &times; $0.0000002 = $1.00<br>
+    &nbsp;&nbsp;<strong>Total: $3.70</strong>
+  </div>
+
+  <p style="color:var(--muted);font-size:0.85rem">Tiers are stored as JSON in the <code>rates.tiers</code> JSONB column. The engine walks bands in order, consuming the metered value across each tier's <code>up_to</code> boundary.</p>
+</div>
+
+<!-- ═══ ACT 5: Koku Cost Type Split ═══ -->
+<h2><span class="act">Act 5:</span> Koku-Compatible Cost Type Split</h2>
+<div class="card">
+  <p>Every cost entry inherits a <strong>cost_type</strong> from its rate definition. This enables the Infrastructure/Supplementary classification that Koku uses for cost reporting.</p>
+
+  <div class="cost-type-grid">
+    <div class="cost-type-box infra">
+      <div class="label">Infrastructure</div>
+      <div class="amount">$0.000626</div>
+      <div class="desc">Base resource costs<br>(uptime, node hours)</div>
+    </div>
+    <div class="cost-type-box supp">
+      <div class="label">Supplementary</div>
+      <div class="amount">$7.303289</div>
+      <div class="desc">Usage-based costs<br>(CPU, memory, tokens)</div>
+    </div>
+  </div>
+
+  <h3>Breakdown by Koku metric</h3>
+  <table>
+    <tr><th>Cost Type</th><th>Koku Metric</th><th style="text-align:right">Entries</th><th style="text-align:right">Total Cost</th></tr>
+    <tr><td><span class="tag tag-infra">Infrastructure</span></td><td>vm_cost_per_hour</td><td class="num">6</td><td class="num">$0.000626</td></tr>
+    <tr><td><span class="tag tag-supp">Supplementary</span></td><td>cpu_core_request_per_hour</td><td class="num">6</td><td class="num">$0.001286</td></tr>
+    <tr><td><span class="tag tag-supp">Supplementary</span></td><td>memory_gb_request_per_hour</td><td class="num">6</td><td class="num">$0.002003</td></tr>
+    <tr class="highlight-purple"><td><span class="tag tag-supp">Supplementary</span></td><td>(MaaS tokens)</td><td class="num">6</td><td class="num">$7.300000</td></tr>
+  </table>
+
+  <p style="color:var(--muted);font-size:0.85rem">The <code>koku_metric</code> column maps our internal meter names to Koku's metric identifiers. Unit conversion (per-second &rarr; per-hour) happens at rate sync time.</p>
+</div>
+
+<!-- ═══ Rating Pipeline Diagram ═══ -->
+<h2 style="background: var(--green)"><span class="act">Reference:</span> Rating Pipeline Flow</h2>
+<div class="card">
+  <div style="overflow-x:auto;text-align:center">
+    <img src="diagrams/rating-pipeline.svg" alt="Rating Pipeline" style="max-width:100%;height:auto">
+  </div>
+</div>
+
+<p style="margin-top:2rem;color:var(--muted);font-size:0.8rem;text-align:center">
+  Cost Management AI Grid PoC &mdash; Rating Engine Demo<br>
+  Reproduce with: <code>bash snippets/demo-rating-features.sh</code>
+</p>
+
+</body>
+</html>

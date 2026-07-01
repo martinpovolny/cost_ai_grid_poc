@@ -28,6 +28,7 @@ into two groups:
 | `inventory_compute_instance` | [`ComputeInstanceRecord`](../inventory-watcher/internal/inventory/models.go) | VMs tracked from OSAC. `last_metered_at` for duration-based metering. |
 | `inventory_cluster` | [`ClusterRecord`](../inventory-watcher/internal/inventory/models.go) | Clusters with `node_sets` JSONB for worker node tracking. |
 | `inventory_model` | [`ModelRecord`](../inventory-watcher/internal/inventory/models.go) | MaaS model deployments (mock — OSAC doesn't have this yet). |
+| `inventory_bare_metal_instance` | [`BareMetalInstanceRecord`](../inventory-watcher/internal/inventory/models.go) | Bare metal instances synced via reconciler. `last_metered_at` for duration metering. |
 | `inventory_instance_type` | [`InstanceTypeRecord`](../inventory-watcher/internal/inventory/models.go) | Instance type catalog (cores, memory) synced from OSAC. |
 
 ### Relationships
@@ -76,6 +77,7 @@ Produced by [`internal/metering/metering.go`](../inventory-watcher/internal/mete
 | `vm_memory_gib_seconds` | compute_instance | gib_seconds | memory_gib × duration |
 | `cluster_uptime_seconds` | cluster | seconds | duration |
 | `cluster_worker_node_seconds` | cluster | node_seconds | Σ(node_set_size × duration) |
+| `bm_uptime_seconds` | bare_metal | seconds | duration |
 
 **Consumption-based (event-driven):**
 

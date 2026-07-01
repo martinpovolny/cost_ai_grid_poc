@@ -1,0 +1,86 @@
+// OpenMeter → Cost Migration Path
+// Shows the transition from OpenMeter to our cost-event-consumer
+
+digraph openmeter_migration {
+    graph [
+        rankdir=TB
+        fontname="Helvetica"
+        fontsize=14
+        label="Migration Path: OpenMeter → Cost Event Consumer"
+        labelloc=t
+        bgcolor=white
+        pad=0.5
+        nodesep=0.8
+        ranksep=1.0
+    ]
+    node [fontname="Helvetica" fontsize=10]
+    edge [fontname="Helvetica" fontsize=9 color="#555555"]
+
+    // ── Before ──
+    subgraph cluster_before {
+        label="Before: OSAC → OpenMeter"
+        style=filled
+        fillcolor="#FFEBEE"
+        color="#C62828"
+        fontcolor="#C62828"
+        fontsize=12
+
+        collector_before [label="OSAC Metering\nCollector" shape=box style="filled,rounded" fillcolor="#FFCDD2" color="#C62828"]
+        openmeter [label="OpenMeter\nPOST /api/v1/events\n(CloudEvents)" shape=box style="filled,rounded" fillcolor="#EF9A9A" color="#C62828"]
+        om_store [label="OpenMeter\nStorage" shape=cylinder style=filled fillcolor="#FFCDD2" color="#C62828"]
+
+        collector_before -> openmeter [label="CloudEvents\n(JSON POST)" color="#C62828"]
+        openmeter -> om_store [label="store"]
+    }
+
+    // ── Transition ──
+    subgraph cluster_transition {
+        label="Transition: Both Running (coexistence)"
+        style="filled,dashed"
+        fillcolor="#FFF8E1"
+        color="#F57F17"
+        fontcolor="#F57F17"
+        fontsize=12
+
+        collector_trans [label="OSAC Metering\nCollector" shape=box style="filled,rounded" fillcolor="#FFF9C4" color="#F57F17"]
+        openmeter_trans [label="OpenMeter\nPOST /api/v1/events" shape=box style="filled,rounded" fillcolor="#FFECB3" color="#F57F17"]
+        cost_trans [label="Cost Consumer\nPOST /api/v1/events\n(same path!)" shape=box style="filled,rounded" fillcolor="#C8E6C9" color="#2E7D32"]
+
+        collector_trans -> openmeter_trans [label="existing\nconfig" color="#F57F17"]
+        collector_trans -> cost_trans [label="new URL\nsame schema" color="#2E7D32" fontcolor="#2E7D32"]
+    }
+
+    // ── After ──
+    subgraph cluster_after {
+        label="After: OSAC → Cost Event Consumer"
+        style=filled
+        fillcolor="#E8F5E9"
+        color="#2E7D32"
+        fontcolor="#2E7D32"
+        fontsize=12
+
+        collector_after [label="OSAC Metering\nCollector" shape=box style="filled,rounded" fillcolor="#A5D6A7" color="#2E7D32"]
+        cost_after [label="Cost Consumer\nPOST /api/v1/events\n(CloudEvents)" shape=box style="filled,rounded" fillcolor="#81C784" color="#2E7D32"]
+        cost_store [label="metering_entries\n+ cost_entries\n+ rates" shape=cylinder style=filled fillcolor="#C8E6C9" color="#2E7D32"]
+
+        collector_after -> cost_after [label="CloudEvents\n(JSON POST)" color="#2E7D32"]
+        cost_after -> cost_store [label="store +\nrate + cost"]
+    }
+
+    // ── Key Points ──
+    key [label=<
+        <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6" BGCOLOR="white">
+            <TR><TD COLSPAN="2" BGCOLOR="#1565C0"><FONT COLOR="white"><B>Why This Works</B></FONT></TD></TR>
+            <TR><TD ALIGN="LEFT">Same endpoint path</TD><TD>POST /api/v1/events</TD></TR>
+            <TR><TD ALIGN="LEFT">Same payload format</TD><TD>CloudEvents JSON</TD></TR>
+            <TR><TD ALIGN="LEFT">Same event types</TD><TD>osac.compute_instance.lifecycle<BR/>osac.cluster.lifecycle</TD></TR>
+            <TR><TD ALIGN="LEFT">Migration effort</TD><TD><B>URL change only</B></TD></TR>
+            <TR><TD ALIGN="LEFT">Coexistence</TD><TD>Both can run in parallel<BR/>during validation</TD></TR>
+            <TR><TD ALIGN="LEFT">Bonus</TD><TD>Cost adds: rating, tiered pricing,<BR/>quotas, tenant overrides,<BR/>Koku-compatible reports</TD></TR>
+        </TABLE>
+    > shape=plain]
+
+    // ── Flow arrows between phases ──
+    openmeter -> collector_trans [style=invis]
+    cost_trans -> collector_after [style=invis]
+}
