@@ -24,26 +24,26 @@ docker push quay.io/martin_povolny/cost-event-consumer:latest
 
 # Deploy stack
 cd ../deploy/k8s
-bash ../../oc.sh apply -f namespace.yaml
-bash ../../oc.sh create secret generic cost-db-credentials \
+oc apply -f namespace.yaml
+oc create secret generic cost-db-credentials \
   --namespace=cost-mgmt \
   --from-literal=user=costuser \
   --from-literal=password=costpass \
   --from-literal=connection-url="postgres://costuser:costpass@cost-db:5432/costdb?sslmode=disable"
-bash ../../oc.sh create secret generic cost-consumer-secrets \
+oc create secret generic cost-consumer-secrets \
   --namespace=cost-mgmt \
   --from-literal=osac-token="dummy-token-for-now"
-bash ../../oc.sh apply -f postgres.yaml
-bash ../../oc.sh wait --for=condition=ready pod -l app=cost-db -n cost-mgmt --timeout=120s
-bash ../../oc.sh apply -f consumer.yaml
-bash ../../oc.sh wait --for=condition=available deployment/cost-event-consumer -n cost-mgmt --timeout=120s
+oc apply -f postgres.yaml
+oc wait --for=condition=ready pod -l app=cost-db -n cost-mgmt --timeout=120s
+oc apply -f consumer.yaml
+oc wait --for=condition=available deployment/cost-event-consumer -n cost-mgmt --timeout=120s
 
 # Verify
-bash ../../oc.sh get pods -n cost-mgmt
-bash ../../oc.sh logs -n cost-mgmt deployment/cost-event-consumer --tail=20
+oc get pods -n cost-mgmt
+oc logs -n cost-mgmt deployment/cost-event-consumer --tail=20
 
 # Access (port-forward)
-bash ../../oc.sh port-forward -n cost-mgmt svc/cost-event-consumer 8020:8020 &
+oc port-forward -n cost-mgmt svc/cost-event-consumer 8020:8020 &
 curl http://localhost:8020/healthz
 open http://localhost:8020/debug/dashboard
 ```
@@ -61,13 +61,13 @@ docker build -t quay.io/martin_povolny/cost-event-consumer:latest -f Containerfi
 docker push quay.io/martin_povolny/cost-event-consumer:latest
 
 # 3. Force pod restart to pull new image
-bash ../oc.sh rollout restart deployment/cost-event-consumer -n cost-mgmt
+oc rollout restart deployment/cost-event-consumer -n cost-mgmt
 
 # 4. Watch rollout
-bash ../oc.sh rollout status deployment/cost-event-consumer -n cost-mgmt
+oc rollout status deployment/cost-event-consumer -n cost-mgmt
 
 # 5. Check logs
-bash ../oc.sh logs -n cost-mgmt deployment/cost-event-consumer -f
+oc logs -n cost-mgmt deployment/cost-event-consumer -f
 ```
 
 ### Faster Iteration (skip push)
@@ -80,7 +80,7 @@ docker build -t quay.io/martin_povolny/cost-event-consumer:dev-$(git rev-parse -
 docker push quay.io/martin_povolny/cost-event-consumer:dev-$(git rev-parse --short HEAD)
 
 # Update deployment
-bash ../oc.sh set image deployment/cost-event-consumer \
+oc set image deployment/cost-event-consumer \
   consumer=quay.io/martin_povolny/cost-event-consumer:dev-$(git rev-parse --short HEAD) \
   -n cost-mgmt
 ```
@@ -107,7 +107,7 @@ curl -X POST http://localhost:8020/api/v1/events \
   }'
 
 # Check the event was processed
-bash ../oc.sh logs -n cost-mgmt deployment/cost-event-consumer --tail=10
+oc logs -n cost-mgmt deployment/cost-event-consumer --tail=10
 
 # Query cost report
 curl http://localhost:8020/api/v1/reports/costs?tenant_id=tenant-1 | jq
@@ -119,7 +119,7 @@ curl http://localhost:8020/api/v1/reports/costs?tenant_id=tenant-1 | jq
 
 ```bash
 # Check pod status
-bash ../../oc.sh describe pod -n cost-mgmt -l app=cost-event-consumer
+oc describe pod -n cost-mgmt -l app=cost-event-consumer
 
 # Common issues:
 # - ImagePullBackOff: Image not found on quay.io, check push succeeded
@@ -131,10 +131,10 @@ bash ../../oc.sh describe pod -n cost-mgmt -l app=cost-event-consumer
 
 ```bash
 # Check PostgreSQL is running
-bash ../../oc.sh get pods -n cost-mgmt -l app=cost-db
+oc get pods -n cost-mgmt -l app=cost-db
 
 # Connect to PostgreSQL pod
-bash ../../oc.sh exec -it cost-db-0 -n cost-mgmt -- psql -U costuser -d costdb
+oc exec -it cost-db-0 -n cost-mgmt -- psql -U costuser -d costdb
 
 # Check tables were created
 \dt
@@ -151,7 +151,7 @@ If the image won't pull from quay.io:
 ```bash
 # Make sure the repository is public
 # Or create image pull secret for private repos:
-bash ../../oc.sh create secret docker-registry quay-pull-secret \
+oc create secret docker-registry quay-pull-secret \
   --docker-server=quay.io \
   --docker-username=<your-username> \
   --docker-password=<your-password> \
@@ -169,10 +169,10 @@ bash ../../oc.sh create secret docker-registry quay-pull-secret \
 
 ```bash
 # Everything in cost-mgmt namespace
-bash ../../oc.sh get all -n cost-mgmt
+oc get all -n cost-mgmt
 
 # Check events for errors
-bash ../../oc.sh get events -n cost-mgmt --sort-by='.lastTimestamp'
+oc get events -n cost-mgmt --sort-by='.lastTimestamp'
 ```
 
 ## Cleanup
@@ -181,12 +181,12 @@ bash ../../oc.sh get events -n cost-mgmt --sort-by='.lastTimestamp'
 
 ```bash
 # Delete all resources
-bash ../../oc.sh delete namespace cost-mgmt
+oc delete namespace cost-mgmt
 
 # Or delete individual components
-bash ../../oc.sh delete -f consumer.yaml
-bash ../../oc.sh delete -f postgres.yaml
-bash ../../oc.sh delete secret cost-db-credentials cost-consumer-secrets -n cost-mgmt
+oc delete -f consumer.yaml
+oc delete -f postgres.yaml
+oc delete secret cost-db-credentials cost-consumer-secrets -n cost-mgmt
 ```
 
 ### Stop CRC
@@ -199,24 +199,165 @@ crc stop
 crc delete
 ```
 
+## Deploying OSAC Stack (Full Integration)
+
+To test full integration with OSAC fulfillment-service, deploy the OSAC stack in CRC.
+
+### Prerequisites (OSAC)
+
+```bash
+# Install operators
+oc create -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+oc create -f https://github.com/cert-manager/trust-manager/releases/download/v0.7.0/trust-manager.yaml
+
+# Install Keycloak operator
+oc create -f https://operatorhub.io/install/keycloak-operator.yaml
+
+# Wait for operators to be ready
+oc wait --for=condition=Available deployment/cert-manager -n cert-manager --timeout=300s
+oc wait --for=condition=Available deployment/trust-manager -n cert-manager --timeout=300s
+```
+
+### Deploy OSAC
+
+```bash
+# Clone OSAC repo
+git clone https://github.com/osac-project/fulfillment-service
+cd fulfillment-service
+
+# Create namespace
+oc create namespace osac
+
+# Deploy PostgreSQL for OSAC
+oc apply -f - <<EOF
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: osac-db
+  namespace: osac
+spec:
+  serviceName: osac-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: osac-db
+  template:
+    metadata:
+      labels:
+        app: osac-db
+    spec:
+      containers:
+        - name: postgres
+          image: quay.io/sclorg/postgresql-18-c10s:latest
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRESQL_USER
+              value: user
+            - name: POSTGRESQL_PASSWORD
+              value: pass
+            - name: POSTGRESQL_DATABASE
+              value: db
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/pgsql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: osac-db
+  namespace: osac
+spec:
+  ports:
+    - port: 5432
+  selector:
+    app: osac-db
+EOF
+
+# Deploy OSAC using Helm
+helm install fulfillment-service ./charts/service/ \
+  --namespace osac \
+  --set variant=openshift \
+  --set images.service=ghcr.io/osac-project/charts/fulfillment-service:main \
+  --set postgresql.enabled=false \
+  --set postgresql.host=osac-db \
+  --set postgresql.database=db \
+  --set postgresql.username=user \
+  --set postgresql.password=pass
+
+# Wait for OSAC to be ready
+oc wait --for=condition=available deployment -l app.kubernetes.io/instance=fulfillment-service -n osac --timeout=300s
+```
+
+### Update Consumer to Use OSAC
+
+```bash
+# Generate OSAC token
+cd /path/to/inventory-watcher
+python3 scripts/gen_token.py > /tmp/osac_token_crc.txt
+
+# Update consumer secret with real token
+oc create secret generic cost-consumer-secrets \
+  --namespace=cost-mgmt \
+  --from-literal=osac-token="$(cat /tmp/osac_token_crc.txt)" \
+  --dry-run=client -o yaml | oc apply -f -
+
+# Update consumer deployment with OSAC service URL
+oc set env deployment/cost-event-consumer \
+  OSAC_BASE_URL=http://fulfillment-rest-gateway.osac.svc:8000 \
+  -n cost-mgmt
+
+# Restart consumer to pick up changes
+oc rollout restart deployment/cost-event-consumer -n cost-mgmt
+```
+
+### Verify OSAC Integration
+
+```bash
+# Port-forward OSAC REST gateway
+oc port-forward -n osac svc/fulfillment-rest-gateway 8011:8000 &
+
+# Check OSAC API
+curl -s http://localhost:8011/api/fulfillment/v1/clusters \
+  -H "Authorization: Bearer $(cat /tmp/osac_token_crc.txt)" | jq
+
+# Check consumer logs - should connect to OSAC successfully
+oc logs -n cost-mgmt deployment/cost-event-consumer --tail=50 | grep -i osac
+```
+
+### Create Test Data in OSAC
+
+Use the snippets from the local dev setup:
+
+```bash
+# Create test compute instances, clusters, etc.
+cd /path/to/inventory-watcher
+OSAC_BASE_URL=http://localhost:8011 \
+OSAC_TOKEN=$(cat /tmp/osac_token_crc.txt) \
+bash snippets/create-test-data.sh
+```
+
 ## Differences from Local Dev
 
 | Aspect | Local Dev | CRC Dev |
 |--------|-----------|---------|
 | **Databases** | Docker containers on localhost | StatefulSet in OpenShift |
 | **Service** | Run as binary `./inventory-watcher` | Deployment in OpenShift |
-| **OSAC** | Local gRPC + REST gateway | Not deployed yet (Phase 5) |
+| **OSAC** | Local gRPC + REST gateway binaries | Helm chart deployment with operators |
 | **Networking** | localhost ports | K8s Services + port-forward |
 | **Logs** | stdout | `oc logs` |
 | **Config** | Environment variables | Secrets + ConfigMaps |
 | **Iteration** | Fast (go run) | Slower (build → push → rollout) |
-
-## Next Steps
-
-- **Deploy OSAC in CRC:** Follow Phase 5 in `docs/deployment-plan.md` to deploy the full OSAC fulfillment-service stack with cert-manager and Keycloak
-- **Add ServiceMonitor:** For Prometheus metrics scraping
-- **Create Helm Chart:** Extract manifests into a proper Helm chart for production
-- **CI/CD:** Set up automated image builds on PR/merge
+| **TLS** | Self-signed openssl cert | cert-manager managed |
+| **Auth** | Local OIDC server script | Keycloak operator |
 
 ## Reference
 
