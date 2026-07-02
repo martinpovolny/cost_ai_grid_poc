@@ -13,6 +13,7 @@ import (
 	"github.com/osac-project/cost-event-consumer/internal/config"
 	"github.com/osac-project/cost-event-consumer/internal/inventory"
 	"github.com/osac-project/cost-event-consumer/internal/metering"
+	"github.com/osac-project/cost-event-consumer/internal/metrics"
 )
 
 // CloudEvent is a generic CloudEvents 1.0 envelope. The Data field is
@@ -180,6 +181,7 @@ func (h *Handler) handleEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !inserted {
+		metrics.EventsProcessedTotal.WithLabelValues(ce.Type, "duplicate").Inc()
 		w.WriteHeader(http.StatusConflict)
 		writeJSON(w, map[string]string{"status": "duplicate"})
 		return
@@ -198,11 +200,13 @@ func (h *Handler) handleEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if processingErr != nil {
+		metrics.EventsProcessedTotal.WithLabelValues(ce.Type, "error").Inc()
 		h.logger.Error("event processing failed", "error", processingErr, "event_id", ce.ID, "type", ce.Type)
 		writeErrorJSON(w, "event stored but processing failed", http.StatusInternalServerError)
 		return
 	}
 
+	metrics.EventsProcessedTotal.WithLabelValues(ce.Type, "accepted").Inc()
 	w.WriteHeader(http.StatusAccepted)
 	writeJSON(w, map[string]string{"status": "accepted"})
 }
