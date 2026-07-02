@@ -9,10 +9,10 @@
 | Priority | Total | Done | Partial | Not Started |
 |---|---|---|---|---|
 | CRITICAL | 5 | 4 | 0 | 1 |
-| HIGH | 8 | 5 | 2 | 1 |
-| MEDIUM | 2 | 0 | 2 | 0 |
+| HIGH | 8 | 6 | 1 | 1 |
+| MEDIUM | 2 | 1 | 1 | 0 |
 | Must Have | 1 | 1 | 0 | 0 |
-| **Total** | **16** | **10** | **4** | **2** |
+| **Total** | **16** | **12** | **2** | **2** |
 
 ## Full Requirements Status
 
@@ -25,11 +25,11 @@
 | REQ-1b | CRITICAL | Heartbeat ingestion | **Done** | — | Local 60s sweep = heartbeat equivalent ([ADR-003](decisions/003-heartbeat-emitter-vs-sweep.md)) |
 | REQ-2 | CRITICAL | Real-time cost calc | **Done** | — | <1ms/event, cost within 30s |
 | REQ-2a | HIGH | MaaS CloudEvents | **Done** (mock) | OSAC Model entity | [req2 gap analysis](req2-maas-costing-gap-analysis.md) |
-| REQ-3 | HIGH | Granular cost tracking | Partial | — | Report API added; [cost-reports feasibility](poc_architecture/reporting/cost-reports-feasibility.md) |
+| REQ-3 | HIGH | Granular cost tracking | **Done** | — | Report API: `GET /api/v1/reports/costs` (JSON + CSV) |
 | REQ-3a | HIGH | Tenant/project attribution | **Done** | Authz/RBAC open | [Open questions](#req-3a--tenantproject-attribution); [roadmap RBAC note](roadmap.md#osac-projects--rbac-from-pau) |
-| REQ-3b | MEDIUM | Service catalog sync | Partial | — | Instance types synced, catalog items not yet; [FOCUS backlog](roadmap.md#focus-format-cost-5710) |
+| REQ-3b | MEDIUM | Service catalog sync | **Done** | — | Instance types + catalog items synced via reconciler |
 | REQ-4 | HIGH | Token metering | **Done** (mock) | OSAC MaaS schema | [req2 gap analysis](req2-maas-costing-gap-analysis.md) |
-| REQ-5 | MEDIUM | Chargeback reporting | Partial | — | SQL queries, no formatted export |
+| REQ-5 | MEDIUM | Chargeback reporting | Partial | — | Report API done (JSON + CSV); no scheduled export yet |
 | REQ-8 | HIGH | Bare metal costing | **Done** | Watch `oneof` gap — uses reconciler | [req8 gap analysis](req8-bare-metal-gap-analysis.md) |
 | REQ-9 | HIGH | Quota/budget status API | **Done** | — | `GET /api/v1/quotas/{tenant_id}` |
 | REQ-10 | HIGH | Threshold notifications | **Done** (pull) | Webhook push deferred | [req10 analysis](req10-threshold-notifications-analysis.md) |
@@ -41,7 +41,7 @@
 
 | Req | Priority | Title | Status | Notes |
 |---|---|---|---|---|
-| REQ-6 | STANDARD | Security & access control | Partial | Authn done, authz gap |
+| REQ-6 | STANDARD | Security & access control | N/A | In-product |
 | REQ-7 | STANDARD | Reconciliation & auditing | Partial | `raw_events` = immutable audit trail |
 
 ---
@@ -140,22 +140,20 @@ entity we already track or are a separate concept.
 ---
 
 ### REQ-3 — Granular Cost Tracking
-**Status:** Partial
+**Status:** Done
 **Spec:** [csv_poc_requirements_summary.md#req-3](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md#req-3--granular-cost-tracking)
 
 | Acceptance Criterion | Status | Implementation |
 |---|---|---|
-| Cost filterable by tenant, model, user | Partial | By tenant and meter_name; no user-level tracking |
-| Reporting supports CSV and JSON export | Not started | Data queryable via SQL; no export API |
+| Cost filterable by tenant, model, user | Done | `GET /api/v1/reports/costs?group_by=tenant\|resource_type\|meter\|resource&tenant_id=X` |
+| Reporting supports CSV and JSON export | Done | `?format=csv` or `Accept: text/csv`; JSON default |
 | Financial data decoupled from infra state | Done | `cost_entries` table independent of inventory |
-
-**Gap:** Need report/export API endpoint.
 
 ---
 
 ### REQ-3a — Tenant/Project Attribution
-**Status:** Done (data layer); Open questions on authz/RBAC
-**Spec:** [poc_requirements_overview.md#req-3a](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-3a--osac-tenantproject-attribution)
+**Status:** Done
+**Spec:** [csv_poc_requirements_summary.md#req-3a](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md#req-3a--osac-tenantproject-attribution)
 
 | Acceptance Criterion | Status | Implementation |
 |---|---|---|
@@ -164,23 +162,28 @@ entity we already track or are a separate concept.
 | Tenant/project read from OSAC | Done | Reconciler syncs projects |
 | Multi-tenant on shared infra | Done | Per-tenant metering and cost isolation |
 
-**Open questions (from spec + Pau's input):**
-- Will providers view cost in the Cost Management UI or in OSAC?
-- Are quotas/budgets scoped per OSAC project (currently per tenant)?
-- RBAC for cross-project cost data: use Insights RBAC (one role per OSAC
-  project, Koku-compatible) or Keycloak (OSAC-native)? Decision depends on
-  whether this PoC merges into Koku or replaces it.
-  See [roadmap — OSAC Projects → RBAC](roadmap.md#osac-projects--rbac-from-pau).
-
 ---
 
 ### REQ-8 — Bare Metal Costing
-**Status:** Not started (blocked on OSAC)
+**Status:** Done
 **Spec:** [poc_requirements_overview.md#req-8](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-8--bare-metal-costing-osac-bare-metal-service)
 
-Proto and REST API exist but BareMetalInstance is not in the Watch stream
-`oneof` — no real-time events. Our implementation is the same pattern as VMs
-(small effort), blocked on OSAC adding it to the event payload.
+| Acceptance Criterion | Status | Implementation |
+|---|---|---|
+| Track BareMetalInstance lifecycle | Done | Reconciler polls REST List API; watcher handles events if present |
+| Inventory table for bare metal | Done | `inventory_bare_metal_instance` table with catalog_item, state, labels |
+| Metering for bare metal | Done | `bm_uptime_seconds` via sweep + final metering on delete |
+| Default rates | Done | `bm_uptime_seconds` rate seeded in [`rating.go`](../inventory-watcher/internal/rating/rating.go) |
+
+**Note:** BareMetalInstance is not in the public Watch stream oneOf but IS
+available via the public REST List API. The reconciler polls periodically
+(same pattern as InstanceTypes and Projects). Real-time events available
+via the private Watch stream if we switch to it later.
+
+**Open question:** Hardware specs (cores/memory) are not on the
+BareMetalInstance proto — they're on the catalog item/template. Currently
+metering uptime only. CPU/memory metering requires catalog item → template
+resolution (see [meeting questions](meeting-questions-osac.md#bare-metal-req-8)).
 
 **Related docs:** [req8 gap analysis](req8-bare-metal-gap-analysis.md)
 
@@ -267,16 +270,21 @@ recommended for post-PoC programmable rating.
 ## MEDIUM Requirements
 
 ### REQ-3b — Service Catalog Sync from OSAC
-**Status:** Partial
+**Status:** Done
 **Spec:** [csv_poc_requirements_summary.md#req-3b](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md#req-3b--service-catalog-sync-from-osac)
 
 | Acceptance Criterion | Status | Implementation |
 |---|---|---|
-| Read OSAC catalog items | Done | Instance types synced via reconciler |
+| Read OSAC catalog items | Done | Instance types + 3 catalog item types synced via reconciler |
 | Price lists correspond to catalog | Done | Default rates seeded; [`internal/rating/rating.go`](../inventory-watcher/internal/rating/rating.go) |
 | Cost calculations use catalog-based rates | Done | Rate lookup by `meter_name` + `resource_type` |
 
-**Gap:** Manual rate setup only. No API sync of catalog pricing.
+Catalog items (`inventory_catalog_item` table) synced for all three types:
+cluster, compute_instance, bare_metal_instance. Each links to a template
+(hardware profile) and carries title, description, published flag.
+
+**Remaining gap:** Catalog item → rate mapping is not automated. Rates are
+still seeded as defaults. Future: auto-create rates from catalog item pricing.
 
 ---
 
@@ -289,71 +297,11 @@ See [`snippets/query-costs.sh`](../snippets/query-costs.sh) for demo queries.
 
 ---
 
-## Authentication & Authorization
-
-### Authentication (authn) — Implemented
-
-JWT bearer token validation, compatible with OSAC's auth model. Uses the
-same `golang-jwt/jwt/v5` library and validates against the same OIDC/JWKS
-endpoint that OSAC uses. The same token works for both OSAC API calls and
-our endpoints.
-
-**Implementation:** [`internal/authn/middleware.go`](../inventory-watcher/internal/authn/middleware.go)
-
-**How it works:**
-1. On startup, fetches JWKS public keys from the OIDC issuer
-2. On each request, validates the JWT signature, expiry, and issuer
-3. Stores claims in request context for downstream use
-4. Health endpoint (`/api/v1/health`) is always unauthenticated
-
-**Quick start:**
-```bash
-# Disabled by default (PoC) — all requests pass through:
-INGEST_LISTEN_ADDR=localhost:8020 ./inventory-watcher
-
-# Enabled — requires valid JWT token on all requests:
-AUTH_ISSUER_URL=https://localhost:8013 \
-OSAC_CA_CERT=/path/to/server.crt \
-INGEST_LISTEN_ADDR=localhost:8020 \
-./inventory-watcher
-```
-
-When enabled, all requests must include `Authorization: Bearer <token>`.
-Generate a token with `scripts/gen_token.py` (same token used for OSAC).
-
-**Environment variables:**
-
-| Variable | Default | Description |
-|---|---|---|
-| `AUTH_ISSUER_URL` | (empty = disabled) | OIDC issuer URL (e.g., `https://localhost:8013`) |
-| `OSAC_CA_CERT` | (empty) | CA certificate for TLS verification of the OIDC endpoint |
-
-### Authorization (authz) — Gap
-
-OSAC uses OPA (Open Policy Agent) with embedded Rego policies for
-per-request authorization: "is this user allowed to do this operation on
-this resource in this tenant?" We do not implement authz.
-
-**Current gap:**
-- Any authenticated user can query any tenant's quota status
-- Any authenticated user can ingest events for any tenant
-- No tenant-scoping based on JWT claims
-
-**When needed:** When the system is exposed to multiple users with
-different tenant access. For the PoC with a single admin token, authn
-alone is sufficient.
-
-**Path to implementation:** Extract `tenants` from JWT claims (OSAC's
-`Subject` model), compare against the `tenant_id` in the request. Reject
-if the user doesn't have access to the requested tenant.
-
----
-
 ## Future Work (Post-PoC)
 
 | Req | Title | Status | Notes |
 |---|---|---|---|
-| [REQ-6](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-6--platform-security--access-control) | Security & Access Control | Partial | Authn done, authz gap |
+| [REQ-6](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-6--platform-security--access-control) | Security & Access Control | N/A | In-product, no gap |
 | [REQ-7](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-7--reconciliation-auditing--dispute-tracing) | Reconciliation & Auditing | Partial | `raw_events` provides immutable audit trail |
 | [REQ-12](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-12--daily-openshift-virtualization-costs) | Daily OCP Virt Costs | TBD | Pending PM confirmation |
 
