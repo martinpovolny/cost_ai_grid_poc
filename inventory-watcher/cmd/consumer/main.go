@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,11 +26,18 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
-
 	cfg := config.Load()
+
+	logLevel := parseLogLevel(cfg.LogLevel)
+	var logHandler slog.Handler
+	opts := &slog.HandlerOptions{Level: logLevel}
+	if cfg.LogFormat == "json" {
+		logHandler = slog.NewJSONHandler(os.Stderr, opts)
+	} else {
+		logHandler = slog.NewTextHandler(os.Stderr, opts)
+	}
+	logger := slog.New(logHandler)
+
 	if err := cfg.Validate(); err != nil {
 		logger.Error("invalid configuration", "error", err)
 		os.Exit(1)
@@ -129,4 +137,17 @@ func main() {
 	}
 
 	logger.Info("cost-event-consumer stopped")
+}
+
+func parseLogLevel(s string) slog.Level {
+	switch strings.ToLower(s) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
