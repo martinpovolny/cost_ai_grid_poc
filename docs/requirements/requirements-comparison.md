@@ -51,6 +51,7 @@ The updated spec **refines and reprioritizes** the original requirements:
 | REQ-8 | Bare metal costing | **Not started** | OSAC bare metal service is being built. No BMaaS events defined yet. |
 | REQ-9 | Quota/budget status API | **Not started** | No API endpoint. Metering data exists to compute quota consumption. |
 | REQ-10 | Threshold notifications to OSAC | **Not started** | No notification mechanism. Would need webhook/event emitter. |
+| REQ-13 | Custom rate dimensions | **Done** | Config-driven extraction of arbitrary CloudEvent fields as metering entries. [Design](../research/req13-custom-metrics-design.md) |
 
 ### MEDIUM Priority
 
