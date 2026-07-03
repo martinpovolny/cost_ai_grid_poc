@@ -9,10 +9,10 @@
 | Priority | Total | Done | Partial | Not Started |
 |---|---|---|---|---|
 | CRITICAL | 5 | 4 | 1 | 0 |
-| HIGH | 8 | 6 | 1 | 1 |
+| HIGH | 8 | 7 | 1 | 0 |
 | MEDIUM | 2 | 1 | 1 | 0 |
 | Must Have | 1 | 1 | 0 | 0 |
-| **Total** | **16** | **12** | **3** | **1** |
+| **Total** | **16** | **13** | **3** | **0** |
 
 ## Full Requirements Status
 
@@ -35,7 +35,7 @@
 | REQ-10 | HIGH | Threshold notifications | **Done** (pull) | Webhook push deferred | [req10 analysis](requirements/req10-threshold-notifications-analysis.md) |
 | REQ-11 | MUST HAVE | Cost tiers | **Done** | — | Tiered pricing in rate engine |
 | REQ-12 | TBD | Daily OCP Virt costs | TBD | PM definition | Not scoped |
-| REQ-13 | HIGH | Custom rate dimensions | Not started | — | [Research done](research/rating-engine-options.md) |
+| REQ-13 | HIGH | Custom rate dimensions | **Done** | — | [Design](research/req13-custom-metrics-design.md); config-driven extraction |
 
 **Post-PoC:**
 
@@ -253,12 +253,18 @@ See [req2 gap analysis](req2-maas-costing-gap-analysis.md).
 ---
 
 ### REQ-13 — Custom Rate Dimensions
-**Status:** Not started
+**Status:** Done
 **Spec:** [poc_requirements_overview.md#req-13](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-13--custom-rate-dimensions-custom-metrics)
 
-Ability to create custom rates from arbitrary CloudEvent dimensions.
-See [rating engine research](research/rating-engine-options.md) — GoRules/Zen
-recommended for post-PoC programmable rating.
+| Acceptance Criterion | Status | Implementation |
+|---|---|---|
+| Consume arbitrary CloudEvent dimensions as rate inputs | Done | [`internal/custommetrics/custommetrics.go`](../inventory-watcher/internal/custommetrics/custommetrics.go) — config-driven extraction |
+| New dimensions configured with ID, classification, rate name | Done | JSON config file via `CUSTOM_METRICS_CONFIG` env var |
+| Custom dimension data stored and available for cost/reporting | Done | Metering entries flow through existing rating + reporting pipeline |
+
+**Design:** [req13-custom-metrics-design.md](research/req13-custom-metrics-design.md)
+**Related Jira:** [COST-3549](https://redhat.atlassian.net/browse/COST-3549)
+**Phase 2:** GoRules/Zen for complex rating logic — see [rating engine research](research/rating-engine-options.md)
 
 ---
 

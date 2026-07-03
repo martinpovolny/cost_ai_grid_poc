@@ -156,6 +156,7 @@ inventory-watcher/
     inventory/store.go           PostgreSQL schema + all queries
     inventory/models.go          All Go struct types
     ingest/handler.go            HTTP API (events, quotas, health)
+    custommetrics/custommetrics.go Config-driven metric extraction (REQ-13)
     config/config.go             Environment variable config
     metrics/metrics.go           Prometheus metric definitions
     metrics/middleware.go        HTTP metrics + request logging middleware

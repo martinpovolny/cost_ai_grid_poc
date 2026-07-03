@@ -11,7 +11,7 @@
 |---|---|---|---|---|
 | GET | `/healthz` | Kubernetes liveness probe | `handleLiveness` | `TestLivenessProbe` |
 | GET | `/readyz` | Kubernetes readiness probe (pings DB) | `handleReadiness` | `TestReadinessProbe` |
-| POST | `/api/v1/events` | Ingest CloudEvents (VM, Cluster, MaaS, IPP) | `handleEvent` | `TestIngestMaaSEvent`, `TestIngestVMHeartbeat`, `TestIngestClusterHeartbeat`, `TestIngestIPPAuthoritativeFormat`, `TestIngestVMaaSAuthoritativeFormat`, `TestIngestCaaSAuthoritativeFormat` |
+| POST | `/api/v1/events` | Ingest CloudEvents (VM, Cluster, MaaS, IPP, custom) | `handleEvent` | `TestIngestMaaSEvent`, `TestIngestVMHeartbeat`, `TestIngestClusterHeartbeat`, `TestIngestIPPAuthoritativeFormat`, `TestIngestVMaaSAuthoritativeFormat`, `TestIngestCaaSAuthoritativeFormat`, `TestIngestCustomMetricEvent` |
 | GET | `/api/v1/quotas/{tenant_id}` | Quota status with alerts | `handleQuotaStatus` | `TestQuotaStatus`, `TestQuotaStatusMissingTenant`, `TestQuotaStatusWithConsumption` |
 | GET | `/api/v1/reports/costs` | Cost report (JSON/CSV, group by tenant/type/meter/resource) | `handleCostReport` | — |
 | GET | `/api/v1/reports/summary` | Pipeline health counts | `handlePipelineSummary` | — |
