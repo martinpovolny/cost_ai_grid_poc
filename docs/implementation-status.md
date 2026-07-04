@@ -9,10 +9,10 @@
 | Priority | Total | Done | Partial | TBD |
 |---|---|---|---|---|
 | CRITICAL | 5 | 4 | 1 | 0 |
-| HIGH | 8 | 7 | 1 | 0 |
+| HIGH | 8 | 6 | 2 | 0 |
 | MEDIUM | 3 | 1 | 2 | 0 |
 | LOW | 2 | 1 | 0 | 1 |
-| **Total** | **18** | **13** | **4** | **1** |
+| **Total** | **18** | **12** | **5** | **1** |
 
 ## Full Requirements Status
 
@@ -25,7 +25,7 @@
 | 5 | REQ-2 | [COST-7796](https://redhat.atlassian.net/browse/COST-7796) | CRITICAL | Real-time cost calc | **Done** | <1ms/event, cost within 30s |
 | 6 | REQ-1a | [COST-7794](https://redhat.atlassian.net/browse/COST-7794) | HIGH | Cluster lifecycle | **Done** | Verify "cluster orders" = Cluster |
 | 7 | REQ-3a | [COST-7799](https://redhat.atlassian.net/browse/COST-7799) | HIGH | Tenant/project attribution | **Done** | Authz/RBAC open |
-| 8 | REQ-3 | [COST-7798](https://redhat.atlassian.net/browse/COST-7798) | HIGH | Granular cost tracking | **Done** | Report API (JSON + CSV) |
+| 8 | REQ-3 | [COST-7798](https://redhat.atlassian.net/browse/COST-7798) | HIGH | Granular cost tracking | Partial | Report API done; project + user dimensions missing |
 | 9 | REQ-9 | [COST-7801](https://redhat.atlassian.net/browse/COST-7801) | HIGH | Quota/budget status API | **Done** | `GET /api/v1/quotas/{tenant_id}` |
 | 10 | REQ-10 | [COST-7807](https://redhat.atlassian.net/browse/COST-7807) | HIGH | Threshold notifications | **Done** (pull) | Webhook push deferred |
 | 11 | REQ-13 | [COST-7810](https://redhat.atlassian.net/browse/COST-7810) | HIGH | Custom rate dimensions | **Done** | [Design](research/req13-custom-metrics-design.md) |
@@ -148,14 +148,23 @@ entity we already track or are a separate concept.
 ---
 
 ### REQ-3 — Granular Cost Tracking
-**Status:** Done
-**Spec:** [csv_poc_requirements_summary.md#req-3](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md#req-3--granular-cost-tracking)
+**Status:** Partial
+**Spec:** [poc_requirements_overview.md#req-3](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-3-granular-cost-tracking)
 
 | Acceptance Criterion | Status | Implementation |
 |---|---|---|
-| Cost filterable by tenant, model, user | Done | `GET /api/v1/reports/costs?group_by=tenant\|resource_type\|meter\|resource&tenant_id=X` |
-| Reporting supports CSV and JSON export | Done | `?format=csv` or `Accept: text/csv`; JSON default |
+| Cost filterable by tenant | Done | `?group_by=tenant&tenant_id=X` |
+| Cost filterable by model/SKU | Done | `?group_by=resource` shows per-resource costs |
+| Cost filterable by project | Gap | Projects synced to `inventory_project` but not available as report dimension |
+| Cost filterable by user | Gap | No user tracking — IPP events have `user` field but we don't extract it |
+| Dashboard with near-real-time consumption | Done | Debug dashboard + Grafana |
+| Reporting supports CSV and JSON export | Done | `?format=csv`; JSON default |
 | Financial data decoupled from infra state | Done | `cost_entries` table independent of inventory |
+
+**Gaps:**
+- **Project dimension:** `inventory_project` exists but report API has no `?group_by=project`
+- **User dimension:** IPP CloudEvents carry a `user` field that we discard during ingestion. Need to store user on metering/cost entries and add `?group_by=user` to reports
+- **Application dimension:** No concept of "application" — may map to OSAC project labels
 
 ---
 
