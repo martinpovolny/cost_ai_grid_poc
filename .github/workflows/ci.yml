@@ -88,7 +88,15 @@ jobs:
         run: go test -race -count=1 -timeout 120s -coverprofile=coverage.out ./...
 
       - name: Coverage summary
-        run: go tool cover -func=coverage.out | tail -1
+        run: |
+          go tool cover -func=coverage.out | tail -1
+          go tool cover -html=coverage.out -o coverage.html
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: inventory-watcher/coverage.html
 
   links:
     name: Check Links
