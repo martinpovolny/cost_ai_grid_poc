@@ -55,9 +55,14 @@
    - Is `model_name` a stable identifier for rate lookups?
    - What states does a model deployment have?
 
-9. **Will Model be an OSAC entity?** — If OSAC adds a Model entity to the
-   fulfillment-service, it appears in the Watch stream and we handle it
-   like VMs. If not, we need a different integration path.
+9. **Will Model be an OSAC entity?** — It is unclear whether OSAC will
+   add a formal Model entity to the fulfillment-service (proto + API +
+   Watch stream, like ComputeInstance) or whether models will remain
+   identified only by name in the CloudEvent `data.model` field. Our
+   implementation works either way, but the answer affects inventory
+   tracking and reconciliation. If Model becomes an entity, we add it
+   to the watcher/reconciler. If not, CloudEvents ingest is the only
+   data source for MaaS.
 
 10. **Token granularity** — The IPP external-metering plugin sends 4 token
     dimensions: prompt, completion, cached, reasoning. We currently meter
@@ -67,13 +72,14 @@
 
 ## Threshold Notifications (REQ-10)
 
-10. **Does OSAC have an alerting/webhook endpoint?** — We implemented
-    pull-based threshold checks (quota API returns crossed thresholds).
-    For push notifications: does OSAC already have an alert ingestion
-    endpoint, or do they need to build one?
+10. **Quota alert mechanism shelved** — Per "Cost Management + OSAC"
+    meeting, 2026-07-02: "quota alert mechanism — deferred until after
+    the PoC." Pull-based threshold checks (quota API + IPP balance check)
+    are the agreed approach for now. Push webhooks not needed for PoC.
+    Revisit post-PoC if OSAC builds an alert ingestion endpoint.
 
-11. **Alert transport** — Webhook with shared secret? CloudEvent POST?
-    mTLS? What does the OSAC team prefer?
+11. ~~**Alert transport**~~ — Deferred per above. If revisited post-PoC:
+    webhook with shared secret, CloudEvent POST, or mTLS.
 
 12. **Grace periods** — Does hitting 100% quota mean immediate cutoff or
     is there a grace window? This affects whether we send a single alert

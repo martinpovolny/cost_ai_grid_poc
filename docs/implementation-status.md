@@ -232,8 +232,15 @@ webhook/event to OSAC. Needs transport agreement (webhook vs CloudEvent).
 | CloudEvents format parsed and stored | Done | `raw_events` table |
 | MaaS cost computed within 60s | Done | Rating sweep every 30s |
 
-Blocked on real OSAC Model entity and MaaS CloudEvents schema.
-See [req2 gap analysis](requirements/req2-maas-costing-gap-analysis.md).
+**Open questions:**
+- It is unclear whether OSAC will add a formal Model entity to the
+  fulfillment-service or keep models as identifiers in CloudEvents only.
+  Our implementation works either way (see [open question #9](requirements/osac-open-questions.md#maas-req-2a--req-4)).
+- End-to-end integration with a live IPP gateway stack not yet tested
+  (contract verified against source code and OpenAPI spec).
+- See [req2 gap analysis](requirements/req2-maas-costing-gap-analysis.md),
+  [IPP overview](research/ipp-overview.md),
+  [tenant attribution](research/maas-tenant-attribution.md).
 
 ---
 
@@ -318,6 +325,7 @@ See [`snippets/query-costs.sh`](../snippets/query-costs.sh) for demo queries.
 | [REQ-6](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-6--platform-security--access-control) | Security & Access Control | N/A | In-product, no gap |
 | [REQ-7](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-7--reconciliation-auditing--dispute-tracing) | Reconciliation & Auditing | Partial | `raw_events` provides immutable audit trail |
 | [REQ-12](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-12--daily-openshift-virtualization-costs) | Daily OCP Virt Costs | TBD | Pending PM confirmation |
+| — | RBAC / Access Control for cost data | Not started | Track separately. Insights RBAC (Koku) vs Keycloak (OSAC). See [open question #18](requirements/osac-open-questions.md). Affects REQ-3a and REQ-6. |
 
 ---
 
