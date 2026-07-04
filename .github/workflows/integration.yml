@@ -116,16 +116,31 @@ jobs:
       - name: Deploy OSAC
         run: bash integration-test/deploy-osac.sh
 
-      - name: Deploy cost-consumer
-        run: bash integration-test/deploy-consumer.sh
-
-      - name: Wait for pods
+      - name: Ensure clean OSAC DB for migration
         run: |
-          echo "--- Waiting for all pods ---"
-          sleep 15
+          echo "Waiting for OSAC DB pod to be truly ready..."
+          sleep 10
+          kubectl wait --for=condition=ready pod -l app=osac-db -n osac --timeout=120s
+          echo "Resetting schema to prevent dirty migration..."
+          kubectl exec -n osac statefulset/osac-db -- \
+            psql -U osacuser -d osacdb -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" || true
+          echo "Schema reset done, gRPC migration will run clean"
+
+      - name: Wait for OSAC services
+        run: |
+          sleep 10
           kubectl wait --for=condition=available deployment/osac-oidc -n osac --timeout=180s
           kubectl wait --for=condition=available deployment/osac-grpc -n osac --timeout=180s
           kubectl wait --for=condition=available deployment/osac-rest -n osac --timeout=180s
+          echo "--- OSAC pods ---"
+          kubectl get pods -n osac
+
+      - name: Deploy cost-consumer
+        run: bash integration-test/deploy-consumer.sh
+
+      - name: Wait for cost-consumer
+        run: |
+          sleep 10
           kubectl wait --for=condition=available deployment/cost-event-consumer -n cost-mgmt --timeout=180s
           echo "--- All pods ---"
           kubectl get pods -A
@@ -146,6 +161,8 @@ jobs:
         run: |
           echo "=== Consumer logs ==="
           kubectl logs -n cost-mgmt deployment/cost-event-consumer --tail=50 || true
+          echo "=== OSAC gRPC init container logs ==="
+          kubectl logs -n osac deployment/osac-grpc -c wait-db --tail=20 || true
           echo "=== OSAC gRPC logs (current) ==="
           kubectl logs -n osac deployment/osac-grpc --tail=50 || true
           echo "=== OSAC gRPC logs (previous) ==="
