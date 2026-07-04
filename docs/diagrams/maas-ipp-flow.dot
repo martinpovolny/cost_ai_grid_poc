@@ -1,0 +1,74 @@
+// MaaS Inference Flow — IPP Metering Integration
+// How inference requests flow through the gateway and generate cost events
+
+digraph maas_flow {
+    graph [
+        rankdir=TB
+        fontname="Helvetica"
+        fontsize=14
+        label="MaaS Inference Flow — IPP Metering Integration"
+        labelloc=t
+        bgcolor=white
+        pad=0.5
+        nodesep=0.6
+        ranksep=0.7
+    ]
+    node [fontname="Helvetica" fontsize=10]
+    edge [fontname="Helvetica" fontsize=9 color="#555555"]
+
+    // ── User ──
+    user [label="User (API key or K8s token)" shape=box style="filled,rounded" fillcolor="#E1F5FE" color="#0277BD"]
+
+    // ── Auth ──
+    auth [label="Authorino — authenticate, inject X-MaaS-* headers" shape=box style="filled,rounded" fillcolor="#FFE0B2" color="#E65100"]
+
+    // ── Gateway ──
+    subgraph cluster_gateway {
+        label="OSAC AI Gateway (Envoy proxy, managed by Istio)\nIPP ext_proc Plugin Chain"
+        style=filled
+        fillcolor="#FFF9C4"
+        color="#F57F17"
+        fontcolor="#F57F17"
+        fontsize=11
+
+        // Request path
+        req_plugins [label="Request plugins:\nmaas-headers-guard → body-field-to-header → api-translation → apikey-injection" shape=box style="filled,rounded" fillcolor="#FFECB3" color="#F57F17"]
+
+        metering_req [label="① external-metering ON REQUEST\ncheckBalance: has this user got budget?" shape=box style="filled,rounded" fillcolor="#C8E6C9" color="#2E7D32"]
+
+        // Response path
+        metering_resp [label="② external-metering ON RESPONSE\nreportUsage: user consumed N tokens" shape=box style="filled,rounded" fillcolor="#C8E6C9" color="#2E7D32"]
+
+        resp_plugins [label="Response plugins:\napi-translation" shape=box style="filled,rounded" fillcolor="#FFECB3" color="#F57F17"]
+    }
+
+    // ── LLM ──
+    llm [label="LLM Provider\n(Anthropic, OpenAI, vLLM, llm-katan)" shape=box style="filled,rounded" fillcolor="#F3E5F5" color="#7B1FA2"]
+
+    // ── Cost System ──
+    subgraph cluster_cost {
+        label="Cost Event Consumer (our service)"
+        style=filled
+        fillcolor="#E8F5E9"
+        color="#2E7D32"
+        fontcolor="#2E7D32"
+        fontsize=11
+
+        balance [label="Balance Check\nGET /customers/{id}/entitlements/{key}/value\n→ {hasAccess, balance, usage, overage}" shape=box style="filled,rounded" fillcolor="#A5D6A7" color="#2E7D32"]
+        ingest [label="Ingest CloudEvent\nPOST /api/v1/events\n→ metering → rating → cost entry" shape=box style="filled,rounded" fillcolor="#A5D6A7" color="#2E7D32"]
+    }
+
+    // ── Request flow (top to bottom) ──
+    user -> auth [label="1. inference request" color="#0277BD" fontcolor="#0277BD"]
+    auth -> req_plugins [label="2. + identity headers" color="#E65100" fontcolor="#E65100"]
+    req_plugins -> metering_req [label="3. before forwarding" color="#F57F17" fontcolor="#F57F17"]
+    metering_req -> balance [label="4. sync call: has budget?" color="#2E7D32" fontcolor="#2E7D32" style=dashed]
+    balance -> metering_req [label="hasAccess: true/false" color="#2E7D32" fontcolor="#2E7D32" style=dashed]
+    metering_req -> llm [label="5. forward to provider\n(or 429 if no budget)" color="#7B1FA2" fontcolor="#7B1FA2"]
+
+    // ── Response flow (bottom to top) ──
+    llm -> resp_plugins [label="6. response with usage block" color="#7B1FA2" fontcolor="#7B1FA2"]
+    resp_plugins -> metering_resp [label="7. after response" color="#F57F17" fontcolor="#F57F17"]
+    metering_resp -> ingest [label="8. CloudEvent: inference.tokens.used\n(fire & forget)" color="#2E7D32" fontcolor="#2E7D32" style=dashed]
+    metering_resp -> user [label="9. response to user" color="#0277BD" fontcolor="#0277BD"]
+}
