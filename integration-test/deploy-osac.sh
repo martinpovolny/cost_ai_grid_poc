@@ -209,7 +209,14 @@ spec:
       initContainers:
         - name: wait-db
           image: postgres:16
-          command: ["sh", "-c", "until pg_isready -h osac-db -U osacuser; do sleep 2; done"]
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h osac-db -U osacuser; do sleep 2; done
+              echo "DB ready, clearing any dirty migration state..."
+              PGPASSWORD=osacpass psql -h osac-db -U osacuser -d osacdb -c \
+                "UPDATE schema_migrations SET dirty = false WHERE dirty = true;" 2>/dev/null || true
       containers:
         - name: grpc
           image: osac-fulfillment-service:ci
