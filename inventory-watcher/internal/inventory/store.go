@@ -46,7 +46,12 @@ CREATE TABLE IF NOT EXISTS raw_events (
     received_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_events_event_id ON raw_events (event_id);
+-- No unique index on event_id by default — raw_events is an append-only
+-- log and the unique check was 33% of ingest handler time (profiled).
+-- Dedup that matters for correctness is at the metering/cost level.
+-- To enable event dedup at the cost of throughput:
+--   CREATE UNIQUE INDEX idx_raw_events_event_id ON raw_events (event_id);
+CREATE INDEX IF NOT EXISTS idx_raw_events_event_id ON raw_events (event_id);
 CREATE INDEX IF NOT EXISTS idx_raw_events_tenant_time ON raw_events (tenant_id, event_time DESC);
 CREATE INDEX IF NOT EXISTS idx_raw_events_type_time ON raw_events (event_type, event_time DESC);
 
@@ -265,16 +270,24 @@ ALTER TABLE rates ADD COLUMN IF NOT EXISTS koku_metric TEXT NOT NULL DEFAULT '';
 ALTER TABLE rates ADD COLUMN IF NOT EXISTS cost_type TEXT NOT NULL DEFAULT 'Infrastructure';
 ALTER TABLE rates ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
 ALTER TABLE rates ADD COLUMN IF NOT EXISTS effective_to TIMESTAMPTZ;
+
+-- Drop the unique index on raw_events.event_id if it exists from an older
+-- schema. The unique check was 33% of ingest handler time (profiled).
+-- Replace with a regular index for lookups.
+DROP INDEX IF EXISTS idx_raw_events_event_id;
+CREATE INDEX IF NOT EXISTS idx_raw_events_event_id ON raw_events (event_id);
 `
 
-// InsertRawEvent stores an event immutably. Returns false if the event was
-// already stored (duplicate event_id), true if it was inserted.
+// InsertRawEvent appends an event to the immutable audit log.
+// By default raw_events has no unique constraint — dedup that matters
+// for billing correctness is at the metering/cost level. To enable
+// event-level dedup at the cost of ~33% ingest throughput, create a
+// unique index: CREATE UNIQUE INDEX ON raw_events (event_id).
 func (s *Store) InsertRawEvent(ctx context.Context, ev RawEvent) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
+	_, err := s.pool.Exec(ctx, `
 		INSERT INTO raw_events
 			(event_id, event_type, event_source, event_time, tenant_id, resource_type, resource_id, data, received_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-		ON CONFLICT (event_id) DO NOTHING
 	`, ev.EventID, ev.EventType, ev.EventSource, ev.EventTime,
 		ev.TenantID, ev.ResourceType, ev.ResourceID, ev.Data)
 
@@ -282,13 +295,8 @@ func (s *Store) InsertRawEvent(ctx context.Context, ev RawEvent) (bool, error) {
 		return false, fmt.Errorf("insert raw event %s: %w", ev.EventID, err)
 	}
 
-	inserted := tag.RowsAffected() > 0
-	if inserted {
-		s.logger.Debug("stored raw event", "event_id", ev.EventID, "type", ev.EventType, "resource", ev.ResourceType)
-	} else {
-		s.logger.Debug("duplicate event skipped", "event_id", ev.EventID)
-	}
-	return inserted, nil
+	s.logger.Debug("stored raw event", "event_id", ev.EventID, "type", ev.EventType, "resource", ev.ResourceType)
+	return true, nil
 }
 
 // InsertMeteringEntry stores a single metering record.

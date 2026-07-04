@@ -143,6 +143,27 @@ Estimated impact of cross-event batching (100 events per flush):
 
 This is T6 (async write buffer) from the performance characteristics doc.
 
+## Drop Unique Index on raw_events — Measured Impact
+
+Removed the unique index on `raw_events.event_id` and the `ON CONFLICT`
+clause. The raw_events table is an append-only audit log that nobody
+reads back — dedup for billing correctness is at the metering/cost level.
+
+Benchmark (3 runs, 5s each):
+
+| Event type | With unique idx | Without unique idx | Change |
+|---|---|---|---|
+| MaaS | 2,394 μs | **2,167 μs** avg | **~10% faster** |
+| VM | 2,654 μs | **2,609 μs** avg | **~2% faster** |
+
+The improvement is real but moderate — the unique index check was only
+part of the InsertRawEvent cost. The INSERT itself, the regular btree
+index update, and the WAL write still happen.
+
+The unique index can be re-added at deployment time if event-level dedup
+is desired (`CREATE UNIQUE INDEX ON raw_events (event_id)`). This is a
+schema/migration decision, not a runtime config.
+
 ### Value of the within-event batch
 
 Even though the benchmark shows no throughput improvement, the change is
