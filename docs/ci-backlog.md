@@ -24,12 +24,16 @@ shipped in the initial version.
 
 ## Medium-term
 
+- [x] ~~**Unpin fulfillment-service in integration test**~~ — root cause found:
+  migration 69 calls `uuidv7()` which requires PostgreSQL 18. Fixed by
+  switching CI to `postgres:18`. See `docs/dev/troubleshooting.md`.
 - [ ] **`govulncheck`** — add `golang/govulncheck-action@v1` to scan
   dependencies for known CVEs. Free and fast.
 - [ ] **Test result reporting** — switch to `gotestsum --junitfile results.xml`
   and upload as a GitHub Actions artifact for better failure diagnosis.
-- [ ] **Integration test job** — run `snippets/test-inventory-watcher.sh`
-  (full pipeline test, ~90s with metering) against a real DB + mock OSAC.
+- [ ] **Integration test job** — ~~run `snippets/test-inventory-watcher.sh`
+  (full pipeline test, ~90s with metering) against a real DB + mock OSAC.~~
+  Done — `integration-test/` with full k3s stack.
 
 ## Longer-term
 
