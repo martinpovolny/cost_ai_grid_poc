@@ -90,6 +90,17 @@ jobs:
           TEST_DB_URL: postgres://user:pass@localhost:5434/costdb_test
         run: go test -race -count=1 -timeout 120s ./...
 
+  links:
+    name: Check Links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: lychee/lychee-action@v2
+        with:
+          args: --offline --no-progress 'docs/**/*.md' 'README.md' 'CLAUDE.md'
+          fail: true
+
   container-build:
     name: Container Build
     runs-on: ubuntu-latest
