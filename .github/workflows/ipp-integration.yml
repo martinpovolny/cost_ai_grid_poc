@@ -1,0 +1,150 @@
+name: IPP Gateway Integration Test (k3s)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ipp-integration:
+    name: IPP Gateway (k3s)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Install k3s
+        run: |
+          curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable=traefik" sh -
+          echo "Waiting for k3s..."
+          for i in $(seq 1 60); do
+            if sudo k3s kubectl get nodes 2>/dev/null | grep -q ' Ready'; then
+              echo "k3s ready"
+              break
+            fi
+            sleep 2
+          done
+          mkdir -p ~/.kube
+          sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+          sudo chown $USER ~/.kube/config
+
+      - name: Install Helm
+        run: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Install Gateway API CRDs
+        run: kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
+
+      - name: Install Istio
+        run: |
+          curl -sL https://istio.io/downloadIstio | ISTIO_VERSION=1.29.2 sh -
+          istio-1.29.2/bin/istioctl install --set profile=minimal \
+              --set values.pilot.env.ENABLE_GATEWAY_API_INFERENCE_EXTENSION=true \
+              -y
+          echo "Istio installed"
+          kubectl get pods -n istio-system
+
+      - name: Build consumer image and import to k3s
+        run: |
+          cd inventory-watcher
+          docker build -t cost-event-consumer:ci -f Containerfile .
+          docker save cost-event-consumer:ci | sudo k3s ctr images import -
+          echo "Consumer image imported"
+
+      - name: Build llm-katan image and import to k3s
+        run: |
+          cat > /tmp/Containerfile.katan <<'EOF'
+          FROM python:3.11-slim
+          RUN pip install --no-cache-dir llm-katan
+          EXPOSE 8000
+          ENTRYPOINT ["llm-katan"]
+          CMD ["--model", "test-model", "--backend", "echo", "--providers", "openai,anthropic", "--host", "0.0.0.0"]
+          EOF
+          docker build -t llm-katan:ci -f /tmp/Containerfile.katan /tmp/
+          docker save llm-katan:ci | sudo k3s ctr images import -
+          echo "llm-katan image imported"
+
+      - name: Clone and build IPP
+        run: |
+          # Uses upstream repo — breaks here surface upstream breaking changes.
+          # If upstream removes the branch or breaks the build, switch to our
+          # locked fork: martinpovolny/ai-gateway-payload-processing
+          # branch: feat/external-metering-dp (snapshot of PR #320)
+          IPP_REPO="https://github.com/opendatahub-io/ai-gateway-payload-processing.git"
+          IPP_BRANCH="feat/external-metering-dp"
+
+          git clone "$IPP_REPO" /tmp/ipp
+          cd /tmp/ipp
+          git fetch origin "pull/320/head:$IPP_BRANCH"
+          git checkout "$IPP_BRANCH"
+          echo "Using IPP commit: $(git log --oneline -1)"
+
+          GOTOOLCHAIN=auto CGO_ENABLED=0 go build -o /tmp/ipp-bin ./cmd
+          echo "IPP binary built"
+
+          cat > /tmp/Containerfile.ipp <<'EOF'
+          FROM registry.access.redhat.com/ubi9-minimal:latest
+          COPY ipp-bin /bbr
+          USER 1001
+          ENTRYPOINT ["/bbr"]
+          EOF
+          docker build -t ipp-metering:ci -f /tmp/Containerfile.ipp /tmp/
+          docker save ipp-metering:ci | sudo k3s ctr images import -
+          echo "IPP image imported"
+
+      - name: Deploy cost-consumer
+        run: bash integration-test/deploy-consumer.sh
+
+      - name: Wait for cost-consumer
+        run: |
+          sleep 10
+          kubectl wait --for=condition=available deployment/cost-event-consumer -n cost-mgmt --timeout=180s
+          kubectl get pods -n cost-mgmt
+
+      - name: Deploy IPP gateway stack
+        run: bash integration-test/deploy-ipp.sh
+
+      - name: Start test client pod
+        run: |
+          kubectl run test-client -n ai-gateway --image=curlimages/curl \
+              --restart=Never --command -- sleep 3600
+          kubectl wait --for=condition=ready pod/test-client -n ai-gateway --timeout=120s
+
+      - name: Run IPP integration tests
+        run: bash integration-test/test-ipp.sh
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "=== Consumer logs ==="
+          kubectl logs -n cost-mgmt deployment/cost-event-consumer --tail=80 || true
+          echo ""
+          echo "=== IPP logs ==="
+          kubectl logs -n ai-gateway deployment/payload-processing --tail=80 || true
+          echo ""
+          echo "=== llm-katan logs ==="
+          kubectl logs -n ai-gateway deployment/llm-katan --tail=30 || true
+          echo ""
+          echo "=== Istio Gateway logs ==="
+          kubectl logs -n ai-gateway -l gateway.networking.k8s.io/gateway-name=ai-gateway --tail=50 || true
+          echo ""
+          echo "=== Istiod logs ==="
+          kubectl logs -n istio-system deployment/istiod --tail=30 || true
+          echo ""
+          echo "=== Pod status ==="
+          kubectl get pods -A -o wide
+          echo ""
+          echo "=== Gateway status ==="
+          kubectl get gateway -A -o yaml || true
+          echo ""
+          echo "=== EnvoyFilter ==="
+          kubectl get envoyfilter -n ai-gateway -o yaml || true
+          echo ""
+          echo "=== Events ==="
+          kubectl get events -n ai-gateway --sort-by='.lastTimestamp' | tail -20 || true
+          kubectl get events -n cost-mgmt --sort-by='.lastTimestamp' | tail -10 || true
