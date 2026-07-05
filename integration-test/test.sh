@@ -74,7 +74,7 @@ check "reconcile completed" curl -sf "$BASE/api/v1/reports/summary"
 # ── 4. Send MaaS CloudEvent ──
 echo ""
 echo "--- CloudEvent ingest ---"
-RESP=$(curl -sf -X POST "$BASE/api/v1/events" \
+EVENT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/v1/events" \
     -H "Content-Type: application/json" \
     -d "{
         \"specversion\":\"1.0\",
@@ -93,7 +93,7 @@ RESP=$(curl -sf -X POST "$BASE/api/v1/events" \
             \"duration_seconds\":60
         }
     }")
-check_output "event accepted" "accepted" echo "$RESP"
+check_output "event accepted" "204" echo "$EVENT_STATUS"
 
 # ── 5. Wait for metering + rating sweeps ──
 echo ""

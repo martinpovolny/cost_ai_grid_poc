@@ -29,7 +29,7 @@
 | 9 | REQ-9 | [COST-7801](https://redhat.atlassian.net/browse/COST-7801) | HIGH | Quota/budget status API | **Done** | `GET /api/v1/quotas/{tenant_id}` |
 | 10 | REQ-10 | [COST-7807](https://redhat.atlassian.net/browse/COST-7807) | HIGH | Threshold notifications | **Done** (pull) | Webhook push deferred |
 | 11 | REQ-13 | [COST-7810](https://redhat.atlassian.net/browse/COST-7810) | HIGH | Custom rate dimensions | **Done** | [Design](research/req13-custom-metrics-design.md) |
-| 12 | REQ-2a | [COST-7797](https://redhat.atlassian.net/browse/COST-7797) | HIGH | MaaS CloudEvents + tokens | **Done** (mock) | [gap analysis](requirements/req2-maas-costing-gap-analysis.md) |
+| 12 | REQ-2a | [COST-7797](https://redhat.atlassian.net/browse/COST-7797) | HIGH | MaaS CloudEvents + tokens | **Done** (emulator) | IPP verified with real plugin + echo LLM. [Stress test](dev/ipp-stress-test-2026-07-05.md) |
 | 13 | REQ-3b | [COST-7800](https://redhat.atlassian.net/browse/COST-7800) | MEDIUM | Service catalog sync | **Done** | Catalog items synced via reconciler |
 | 14 | REQ-5 | [COST-7801](https://redhat.atlassian.net/browse/COST-7801) | MEDIUM | Chargeback reporting | Partial | Report API done; scheduled export TBD |
 | 15 | REQ-7 | [COST-7802](https://redhat.atlassian.net/browse/COST-7802) | MEDIUM | Audit trail | Partial | `raw_events` = immutable audit log |
@@ -236,19 +236,26 @@ webhook/event to OSAC. Needs transport agreement (webhook vs CloudEvent).
 
 | Acceptance Criterion | Status | Implementation |
 |---|---|---|
-| Receive and process MaaS CloudEvents | Done (mock) | [`internal/ingest/handler.go`](../inventory-watcher/internal/ingest/handler.go) |
+| Receive and process MaaS CloudEvents | Done | [`internal/ingest/handler.go`](../inventory-watcher/internal/ingest/handler.go) |
 | Events ingested within 30 seconds | Done | <1ms per event |
 | CloudEvents format parsed and stored | Done | `raw_events` table |
 | MaaS cost computed within 60s | Done | Rating sweep every 30s |
+| IPP integration (checkBalance + reportUsage) | Done (emulator) | Verified with real IPP plugin (PR #320) + llm-katan echo LLM. [Stress test: 850 req/s](dev/ipp-stress-test-2026-07-05.md) |
+
+**What is verified vs emulated:**
+- **Real:** IPP external-metering plugin (PR #320 build), Istio ext_proc
+  wiring, our checkBalance and reportUsage endpoints
+- **Emulated:** LLM backend (llm-katan echo mode), X-MaaS-* identity
+  headers (manually injected, no Authorino)
 
 **Open questions:**
 - It is unclear whether OSAC will add a formal Model entity to the
   fulfillment-service or keep models as identifiers in CloudEvents only.
   Our implementation works either way (see [open question #9](requirements/osac-open-questions.md#maas-req-2a--req-4)).
-- End-to-end integration with a live IPP gateway stack not yet tested
-  (contract verified against source code and OpenAPI spec).
-- See [req2 gap analysis](requirements/req2-maas-costing-gap-analysis.md),
-  [IPP overview](research/ipp-overview.md),
+- MaaS tenant attribution: subscription → tenant mapping needs
+  confirmation (see [open question #19](requirements/osac-open-questions.md#maas-tenant-attribution-ipp-integration)).
+- See [MaaS flow](maas-flow.md), [IPP overview](research/ipp-overview.md),
+  [k3d deployment guide](dev/k3d-ipp-deployment.md),
   [tenant attribution](research/maas-tenant-attribution.md).
 
 ---
