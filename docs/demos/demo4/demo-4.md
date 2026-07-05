@@ -326,7 +326,7 @@ verified against the upstream source code and OpenAPI spec.
 
 ## IPP Stress Test: 850 req/s, Zero Errors
 
-![Test Architecture](../../dev/k3d-test-stack.svg)
+![Test Architecture](../../diagrams/k3d-test-stack.svg)
 
 | Test | Concurrency | RPS | P50 | P99 |
 |------|-------------|-----|-----|-----|
