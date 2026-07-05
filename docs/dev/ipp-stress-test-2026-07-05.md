@@ -116,6 +116,31 @@ All 1000 events ingested → 2204 metering entries → 1202 cost entries
 | tenant-2 | 66 | $0.000594 |
 | tenant-0 | 66 | $0.000594 |
 
+## Full Benchmark Suite
+
+4 tests, 40,456 total requests, **zero failures**.
+
+| Test | Requests | Concurrency | Duration | RPS | Avg | P50 | P95 | P99 |
+|------|----------|-------------|----------|-----|-----|-----|-----|-----|
+| Baseline | 5,000 | 10 | 6.2s | **803** | 12ms | 12ms | 16ms | 23ms |
+| High concurrency | 5,000 | 50 | 5.8s | **860** | 58ms | 55ms | 73ms | 91ms |
+| Max concurrency | 5,000 | 100 | 5.7s | **873** | 114ms | 109ms | 147ms | 264ms |
+| Sustained (30s) | **25,456** | 20 | 30s | **848** | 24ms | 23ms | 30ms | 43ms |
+
+### Observations
+
+- Throughput plateaus at ~850 req/s regardless of concurrency — single-pod bottleneck
+- Latency scales linearly with concurrency (P50: 12ms@10c → 109ms@100c)
+- Sustained test: **848 req/s for 30 seconds straight**, zero errors
+- All 40,456 events ingested: 41,532 raw_events, 83,064 metering_entries
+
+### Environment notes
+
+- All components are single-replica on a local k3d cluster (ARM Mac via QEMU)
+- llm-katan echo mode adds ~1-2ms per request
+- Port-forward adds ~1ms overhead vs in-cluster
+- PostgreSQL is ephemeral (no persistent volume) — production perf would differ
+
 ## Known Issue
 
 The IPP logs `"failed to report usage to metering system: usage report
