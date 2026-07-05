@@ -348,17 +348,17 @@ func (s *Store) InsertMeteringEntryBatch(ctx context.Context, entries []Metering
 		return s.InsertMeteringEntry(ctx, entries[0])
 	}
 
-	query := "INSERT INTO metering_entries (raw_event_id, resource_type, resource_id, tenant_id, meter_name, value, unit, period_start, period_end) VALUES "
-	args := make([]interface{}, 0, len(entries)*9)
+	query := "INSERT INTO metering_entries (raw_event_id, resource_type, resource_id, tenant_id, project_id, meter_name, value, unit, period_start, period_end) VALUES "
+	args := make([]interface{}, 0, len(entries)*10)
 	for i, e := range entries {
 		if i > 0 {
 			query += ", "
 		}
-		base := i * 9
-		query += fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-			base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9)
+		base := i * 10
+		query += fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10)
 		args = append(args, e.RawEventID, e.ResourceType, e.ResourceID,
-			e.TenantID, e.MeterName, e.Value, e.Unit, e.PeriodStart, e.PeriodEnd)
+			e.TenantID, e.ProjectID, e.MeterName, e.Value, e.Unit, e.PeriodStart, e.PeriodEnd)
 	}
 	_, err := s.pool.Exec(ctx, query, args...)
 	if err != nil {
