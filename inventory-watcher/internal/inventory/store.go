@@ -640,6 +640,7 @@ func (s *Store) UpsertProject(ctx context.Context, rec ProjectRecord) error {
 		return fmt.Errorf("upsert project %s: %w", rec.ProjectID, err)
 	}
 
+	s.projectCache.Delete(rec.Tenant)
 	s.logger.Debug("upserted project", "id", rec.ProjectID, "name", rec.Name)
 	return nil
 }

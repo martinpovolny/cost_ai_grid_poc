@@ -131,7 +131,7 @@ validation — exactly the kind of thing that bites in production.
 | **56** | **Debug dashboard enabled by default** | **Medium** | v4 | **Deferred** (post-PoC) |
 | **57** | **Non-transactional metering + last_metered_at update** | **Medium** | v4 | **Open** |
 | **58** | **Silent NodeSets JSON parse failure** | **Medium** | v4 | **Fixed** |
-| **59** | **`projectCache` never invalidates** | **Medium** | v4 | **Open** |
+| **59** | **`projectCache` never invalidates** | **Medium** | v4 | **Fixed** |
 | **60** | **OSAC `listAll` pagination unbounded** | **Medium** | v4 | **Open** |
 | **61** | **Store is a God object (1300+ lines, 50 methods)** | **Medium** | v4 | **Accepted (PoC)** |
 | **62** | **Handler mixes routing, processing, and business logic** | **Medium** | v4 | **Accepted (PoC)** |

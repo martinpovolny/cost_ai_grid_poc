@@ -430,9 +430,11 @@ func TestQuotaStatusMissingTenant(t *testing.T) {
 func TestQuotaStatusWithConsumption(t *testing.T) {
 	ctx := context.Background()
 
-	// Seed a quota for test-tenant so consumption is visible
+	tenant := fmt.Sprintf("quota-test-%d", time.Now().UnixNano())
+
+	// Seed a quota
 	testStore.UpsertQuota(ctx, inventory.QuotaRecord{
-		TenantID:      "test-tenant",
+		TenantID:      tenant,
 		MeterName:     "maas_tokens_in",
 		LimitValue:    1000000,
 		Unit:          "tokens",
@@ -440,8 +442,32 @@ func TestQuotaStatusWithConsumption(t *testing.T) {
 		EffectiveFrom: time.Now().Add(-1 * time.Hour),
 	})
 
-	// We already ingested MaaS events for test-tenant in earlier tests.
-	resp, err := http.Get(testServer.URL + "/api/v1/quotas/test-tenant")
+	// Ingest an event so consumption > 0
+	event := map[string]interface{}{
+		"specversion": "1.0",
+		"type":        "osac.model.lifecycle",
+		"source":      "test",
+		"id":          fmt.Sprintf("quota-evt-%d", time.Now().UnixNano()),
+		"time":        time.Now().UTC().Format(time.RFC3339),
+		"data": map[string]interface{}{
+			"tenant_id":        tenant,
+			"model_id":         "quota-model",
+			"model_name":       "quota-model",
+			"state":            "MODEL_STATE_RUNNING",
+			"tokens_in":        5000,
+			"tokens_out":       1000,
+			"requests":         10,
+			"duration_seconds":  60,
+		},
+	}
+	body, _ := json.Marshal(event)
+	postResp, err := http.Post(testServer.URL+"/api/v1/events", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("event ingest failed: %v", err)
+	}
+	postResp.Body.Close()
+
+	resp, err := http.Get(testServer.URL + "/api/v1/quotas/" + tenant)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
