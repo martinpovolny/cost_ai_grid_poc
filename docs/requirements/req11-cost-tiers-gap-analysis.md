@@ -9,6 +9,10 @@
 > **Depends on:** REQ-2 (Near-Real-Time Cost Calculation) — **Done**,
 > REQ-2a (MaaS token metering) — **In Progress**
 
+## TL;DR
+
+Tiered pricing is already implemented and works correctly for MaaS token rates — per-event semantics, no code changes needed. Capacity-based rates (GiB-month, core-hours) require a separate cumulative/period-accumulating tier logic that is not yet implemented. Tiers configured on capacity meters today would silently produce incorrect (undercharged) billing. Two open questions need sign-off before implementation proceeds: demo scope and tier ownership.
+
 ## What We Have
 
 The rating engine already implements tiered pricing. `ApplyRate` checks for
