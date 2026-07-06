@@ -33,7 +33,7 @@
 | 13 | REQ-3b | [COST-7800](https://redhat.atlassian.net/browse/COST-7800) | MEDIUM | Service catalog sync | **Done** | Catalog items synced via reconciler |
 | 14 | REQ-5 | [COST-7801](https://redhat.atlassian.net/browse/COST-7801) | MEDIUM | Chargeback reporting | Partial | Report API done; scheduled export TBD |
 | 15 | REQ-7 | [COST-7802](https://redhat.atlassian.net/browse/COST-7802) | MEDIUM | Audit trail | Partial | `raw_events` = immutable audit log |
-| 16 | REQ-11 | [COST-7808](https://redhat.atlassian.net/browse/COST-7808) | LOW | Cost tiers | **Done** | Tiered pricing in rate engine |
+| 16 | REQ-11 | [COST-7808](https://redhat.atlassian.net/browse/COST-7808) | LOW | Cost tiers | **Partial** | [req11 gap analysis](requirements/req11-cost-tiers-gap-analysis.md) — MaaS tiers done; capacity cumulative tiers gap |
 | 17 | REQ-12 | [COST-7808](https://redhat.atlassian.net/browse/COST-7808) | LOW | Daily OCP Virt costs | TBD | PM definition pending |
 | 18 | REQ-8 | [COST-7801](https://redhat.atlassian.net/browse/COST-7801) | HIGH | Bare metal costing | **Done** | [gap analysis](requirements/req8-bare-metal-gap-analysis.md) |
 
@@ -290,13 +290,14 @@ webhook/event to OSAC. Needs transport agreement (webhook vs CloudEvent).
 ## MUST HAVE Requirements
 
 ### REQ-11 — Cost Tiers
-**Status:** Done
+**Status:** Partial
+**Gap Analysis:** [req11-cost-tiers-gap-analysis.md](requirements/req11-cost-tiers-gap-analysis.md)
 **Spec:** [poc_requirements_overview.md#req-11](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-11--cost-tiers)
 
 | Acceptance Criterion | Status | Implementation |
 |---|---|---|
 | Multiple pricing tiers per resource type | Done | `rates.tiers` JSONB column; [`internal/rating/rating.go`](../inventory-watcher/internal/rating/rating.go) → `applyTieredRate` |
-| Tiers apply to capacity and MaaS rates | Done | Same rate engine for both |
+| Tiers apply to capacity and MaaS rates | **Gap** | Per-event logic is correct for MaaS; capacity meters require cumulative/period-accumulating tier logic — not yet implemented |
 | Tier config without code changes | Done | JSON in `rates` table; no recompile needed |
 
 ---

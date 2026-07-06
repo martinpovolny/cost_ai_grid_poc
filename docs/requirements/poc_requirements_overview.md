@@ -418,7 +418,7 @@ Zero-leakage reconciliation, immutable audit logs, and dispute resolution suppor
 ### REQ-11: Cost Tiers
 **Priority:** LOW &nbsp;·&nbsp; [COST-7808](https://redhat.atlassian.net/browse/COST-7808) &nbsp;·&nbsp; **Rank:** 16
 
-Tiered pricing support for both capacity-based and MaaS consumption-based rates. Example: first 20 GiB free, next 100 GiB at $0.08/GiB-month, next 1000 GiB at $0.07/GiB-month.
+Tiered pricing support for both capacity-based and MaaS consumption-based rates. Example: first 1M tokens free, next 10M tokens at $0.50/M (MaaS); first 20 GiB free, next 100 GiB at $0.08/GiB-month (capacity — post-PoC).
 
 **Acceptance Criteria:**
 - Rate engine supports multiple pricing tiers per resource type
@@ -426,9 +426,9 @@ Tiered pricing support for both capacity-based and MaaS consumption-based rates.
 - Tier configuration is manageable without code changes
 
 **Current State:**
-- No tiered pricing support in RHCM today
-- Existing flat-rate cost models would need extension
-- Depends on Price List Lifecycle work (COST-575, COST-7327, COST-7328)
+- Tiered pricing implemented in the PoC rate engine for MaaS token rates (per-event semantics)
+- Capacity-based cumulative tier logic (GiB-month, core-hours) is a gap — requires period-accumulating semantics not yet implemented
+- See [req11 gap analysis](req11-cost-tiers-gap-analysis.md) for full breakdown and implementation options
 
 **Open Questions:**
 - Where do cost tiers live: OSAC, Cost, or both synced?
