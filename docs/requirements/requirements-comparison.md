@@ -20,8 +20,10 @@ The updated spec **refines and reprioritizes** the original requirements:
 3. **90-second end-to-end SLA** (POC-ARCH) — OSAC sends within 30s, Cost
    processes within 60s. We meet this (<1ms per event).
 
-4. **Cluster Orders** are the OSAC entity for clusters (REQ-1a) — not raw
-   Cluster objects. We track clusters but not cluster orders specifically.
+4. **Cluster Orders** are the OSAC ordering workflow for clusters (REQ-1a).
+   ClusterOrder is the purchase request; the resulting Cluster is the
+   provisioned resource we track for cost. Verified — see
+   [open question #15](osac-open-questions.md) (resolved).
 
 5. **Quota API** (REQ-9) and **Notifications** (REQ-10) are HIGH priority —
    elevated from the original brief.
@@ -45,7 +47,7 @@ The updated spec **refines and reprioritizes** the original requirements:
 
 | Req | Title | Our Status | Gap |
 |---|---|---|---|
-| REQ-1a | Cluster lifecycle via cluster orders | **Partial** | We track clusters but not "cluster orders" as a concept. Need to verify OSAC's cluster order API. |
+| REQ-1a | Cluster lifecycle via cluster orders | **Done** | ClusterOrder is the ordering workflow; we track the resulting Cluster (verified — [open question #15](osac-open-questions.md)) |
 | REQ-3 | Granular cost tracking | **Partial** | Cost data exists with drill-down by tenant, resource type, meter. No export API (CSV/JSON) yet. |
 | REQ-3a | Tenant/project attribution | **Done** | Tenant → Project hierarchy in inventory. Costs attributed per tenant. |
 | REQ-8 | Bare metal costing | **Not started** | OSAC bare metal service is being built. No BMaaS events defined yet. |
