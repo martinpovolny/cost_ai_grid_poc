@@ -36,6 +36,47 @@ Our Go mapping: [`internal/osac/types.go`](../inventory-watcher/internal/osac/ty
 | `EVENT_TYPE_OBJECT_UPDATED` | `"EVENT_TYPE_OBJECT_UPDATED"` | Yes |
 | `EVENT_TYPE_OBJECT_DELETED` | `"EVENT_TYPE_OBJECT_DELETED"` | Yes |
 
+## OSAC Resource Type Overview
+
+Consolidated view of all resource types relevant to the PoC: what exists
+on the OSAC side, how we consume it, and current processing status.
+
+| Resource Type | PoC Req | Public Watch | Private Watch | REST List | Proto | Our Processing | Notes |
+|---|---|---|---|---|---|---|---|
+| **ComputeInstance** | REQ-1 | Yes | Yes | Yes | Public | **Inventory + 3 meters** | Fully operational |
+| **Cluster** | REQ-1, REQ-1a | Yes | Yes | Yes | Public | **Inventory + 2 meters** | Fully operational |
+| **InstanceType** | REQ-3b | Yes | Yes | Yes | Public | **Inventory** (ref data) | Cores/memory lookup for VMs |
+| **Project** | REQ-3a | Yes | Yes | Yes | Public | **Inventory** | Tenant/project attribution |
+| **Tenant** | REQ-3a | Yes | Yes | — | Public | **Logged only** | Tracked implicitly via string columns on other tables |
+| **BareMetalInstance** | REQ-8 (parked) | **No** | Yes (field 27) | Yes | Public | **Inventory + 1 meter** | Consumed via REST List; hw specs via catalog_item only |
+| **CatalogItem** (×3) | REQ-3b | **No** | Yes | Yes | Public | **Inventory** (REST poll) | cluster / compute / bare_metal variants |
+| **HostType** | indirect | Yes | Yes | — | Public | Logged only | Reference data for cluster node set specs |
+| **ClusterTemplate** | — | Yes | Yes | Yes | Public | Logged only | Reference data |
+| **ComputeInstanceTemplate** | — | Yes | Yes | — | Public | Logged only | Reference data |
+| **Role** | — | Yes | Yes | — | Public | Logged only | RBAC; deferred post-PoC |
+| **RoleBinding** | — | Yes | Yes | — | Public | Logged only | RBAC; deferred post-PoC |
+| **ClusterOrder** | — | **No** | ? | Yes | Public | **Not needed** | Ordering workflow, not a running resource; we track the resulting Cluster instead (resolved, see [open question #15](requirements/osac-open-questions.md)) |
+| **BareMetalInstanceTemplate** | indirect | **No** | Yes | ? | Public? | **Not consumed** | Needed for BM hardware spec resolution |
+| **StorageBackend** | — | **No** | Yes | ? | ? | Not consumed | Not in any PoC requirement |
+| **Model (MaaS)** | REQ-2a, REQ-4 | **No** | **No** | **No** | **None** | **Inventory + 3 meters** (via HTTP ingest) | `model_name` from CloudEvent payload; no OSAC entity — see below |
+
+### Model (MaaS) — No OSAC Entity
+
+OSAC does not define a Model proto, API, or Watch stream event. We receive
+`model_name` in the `osac.model.lifecycle` CloudEvent `data` payload and use
+that as the model identifier (upserted into `inventory_model`). This works
+for the PoC; if OSAC later adds a formal Model entity, we adopt it then.
+The IPP external-metering plugin is an alternative path that bypasses the
+need for an OSAC Model entity entirely.
+
+### Key Gaps
+
+- **BareMetalInstance + CatalogItems**: proto and REST exist, but not in the
+  public Watch stream. Available in the private stream (open question #6:
+  is the cost consumer authorized to use it?). Currently works via REST polling.
+
+---
+
 ## Resource Messages Consumed
 
 ### ComputeInstance
@@ -184,8 +225,8 @@ message Metadata {
 | GET | `/api/fulfillment/v1/compute_instance_catalog_items` | [`ListComputeInstanceCatalogItems`](../inventory-watcher/internal/osac/client.go) | Sync compute catalog items |
 | GET | `/api/fulfillment/v1/baremetal_instance_catalog_items` | [`ListBareMetalInstanceCatalogItems`](../inventory-watcher/internal/osac/client.go) | Sync bare metal catalog items |
 
-## Messages Not Yet in OSAC (Mock Only)
+## Messages Not Yet in OSAC
 
-| Resource | Status | Our handling |
+| Resource | OSAC Status | Our Handling |
 |---|---|---|
-| Model (MaaS) | No proto, no API, no Watch stream events | Mock via HTTP ingest endpoint; see [req2 gap analysis](requirements/req2-maas-costing-gap-analysis.md) |
+| Model (MaaS) | No proto, no API, no Watch stream events | `model_name` from CloudEvent payload → `inventory_model` + 3 meters (`maas_tokens_in`, `maas_tokens_out`, `maas_requests`). See [OSAC Resource Type Overview](#osac-resource-type-overview) and [req2 gap analysis](requirements/req2-maas-costing-gap-analysis.md) |

@@ -23,7 +23,7 @@
 | 3 | REQ-1 | [COST-7793](https://redhat.atlassian.net/browse/COST-7793) | CRITICAL | OSAC integration | **Done** | [gap analysis](requirements/req1-osac-integration-gap-analysis.md) |
 | 4 | REQ-1b | [COST-7795](https://redhat.atlassian.net/browse/COST-7795) | CRITICAL | Heartbeat ingestion | **Done** | Local 60s sweep ([ADR-003](decisions/003-heartbeat-emitter-vs-sweep.md)) |
 | 5 | REQ-2 | [COST-7796](https://redhat.atlassian.net/browse/COST-7796) | CRITICAL | Real-time cost calc | **Done** | <1ms/event, cost within 30s |
-| 6 | REQ-1a | [COST-7794](https://redhat.atlassian.net/browse/COST-7794) | HIGH | Cluster lifecycle | **Done** | Verify "cluster orders" = Cluster |
+| 6 | REQ-1a | [COST-7794](https://redhat.atlassian.net/browse/COST-7794) | HIGH | Cluster lifecycle | **Done** | ClusterOrder is the ordering workflow; we track the resulting Cluster (verified) |
 | 7 | REQ-3a | [COST-7799](https://redhat.atlassian.net/browse/COST-7799) | HIGH | Tenant/project attribution | **Done** | Authz/RBAC open |
 | 8 | REQ-3 | [COST-7798](https://redhat.atlassian.net/browse/COST-7798) | HIGH | Granular cost tracking | Partial | Report API done; project + user dimensions missing |
 | 9 | REQ-9 | [COST-7801](https://redhat.atlassian.net/browse/COST-7801) | HIGH | Quota/budget status API | **Done** | `GET /api/v1/quotas/{tenant_id}` |
@@ -132,18 +132,15 @@ is a separate concern owned by the RHCM team.
 ## HIGH Requirements
 
 ### REQ-1a — Cluster Lifecycle via Cluster Orders
-**Status:** Partial
+**Status:** Done
 **Spec:** [csv_poc_requirements_summary.md#req-1a](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md#req-1a--osac-cluster-lifecycle-via-cluster-orders)
 
 | Acceptance Criterion | Status | Implementation |
 |---|---|---|
-| Monitor cluster orders for state changes | Partial | We track `Cluster` objects, not "cluster orders" specifically |
+| Monitor cluster orders for state changes | Done | We track `Cluster` objects — ClusterOrder is the ordering workflow, the Cluster is the provisioned resource ([resolved](requirements/osac-open-questions.md#cluster-lifecycle-req-1a)) |
 | State changes captured | Done | Watch stream CREATED/UPDATED/DELETED |
 | Cluster rate configured per cluster order | Done | [`internal/rating/rating.go`](../inventory-watcher/internal/rating/rating.go) — `cluster_uptime_seconds`, `cluster_worker_node_seconds` rates |
 | Cost based on provisioned capacity + duration | Done | [`internal/metering/metering.go`](../inventory-watcher/internal/metering/metering.go) — `clusterMeters` |
-
-**Gap:** Need to verify whether "cluster orders" in OSAC map to the `Cluster`
-entity we already track or are a separate concept.
 
 ---
 

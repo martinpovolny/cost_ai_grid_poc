@@ -102,10 +102,17 @@
 
 ## Cluster Lifecycle (REQ-1a)
 
-15. **"Cluster orders" vs Cluster entity** — The requirements mention
-    "cluster orders" but OSAC has `Cluster` objects. Are these the same
-    thing, or is there a separate cluster ordering workflow we should
-    track?
+15. ~~**"Cluster orders" vs Cluster entity**~~ — **Resolved.** ClusterOrder
+    is the ordering/provisioning workflow: a user POSTs a ClusterOrder, the
+    operator provisions the actual Cluster, and the order transitions
+    through states (`CLUSTER_ORDER_STATE_ACCEPTED` → `_FULFILLED` /
+    `_FAILED`). The resulting Cluster is a separate entity in the Watch
+    stream. For cost purposes we track the **Cluster** (the running
+    resource that incurs cost), not the ClusterOrder (the purchase request).
+    No action needed — we already consume Cluster events.
+    *Source: wg-osac-eng Slack thread, 2025-04-02, Juan Antonio Hernandez
+    Fernandez's test workflow showing the two-step create-cluster →
+    update-order-status flow.*
 
 ## Tenant/Project Attribution (REQ-3a)
 

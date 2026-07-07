@@ -96,6 +96,9 @@ func main() {
 			logger.Error("failed to create OSAC client", "error", err)
 			os.Exit(1)
 		}
+		if cfg.OSACGRPCAddress != "" {
+			osacClient.SetGRPCAddress(cfg.OSACGRPCAddress)
+		}
 		w = watcher.New(osacClient, store, m, logger)
 		r = reconciler.New(osacClient, store, w, cfg.ReconcileInterval, logger)
 	}

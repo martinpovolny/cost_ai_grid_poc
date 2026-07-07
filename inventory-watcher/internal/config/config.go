@@ -9,6 +9,7 @@ import (
 
 type Config struct {
 	OSACBaseURL        string
+	OSACGRPCAddress    string
 	OSACToken          string
 	OSACCACert         string
 	InventoryDBURL     string
@@ -107,6 +108,7 @@ func findCredEnd(url string) int {
 func Load() *Config {
 	return &Config{
 		OSACBaseURL:        envOrDefault("OSAC_BASE_URL", "http://localhost:8011"),
+		OSACGRPCAddress:    envOrDefault("OSAC_GRPC_ADDRESS", "localhost:8010"),
 		OSACToken:          os.Getenv("OSAC_TOKEN"),
 		OSACCACert:         envOrDefault("OSAC_CA_CERT", ""),
 		InventoryDBURL:     envOrDefault("INVENTORY_DB_URL", "postgres://user:pass@localhost:5434/costdb"),
