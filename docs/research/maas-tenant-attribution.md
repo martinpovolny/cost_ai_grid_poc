@@ -17,7 +17,7 @@ and Slack (#wg-osac-maas).
   via Keycloak. The `project_id` in OSAC is retrieved from Keycloak
   groups.
 
-**Confirmed by Noy Itzikowitz (comment on open questions doc):**
+**Confirmed by Noy Itzikowitz (relayed by Kris Verlaenen in comment on open questions doc):**
 - **Q1 (subscription namespace = tenant):** Yes — with AITenant
   multi-tenancy enabled, subscriptions live in `ai-tenant-{name}`
   namespaces, so parsing works for PoC. But it's a naming convention,
