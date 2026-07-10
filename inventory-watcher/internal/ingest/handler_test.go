@@ -774,6 +774,96 @@ func TestIngestIPPAuthoritativeFormat(t *testing.T) {
 	}
 }
 
+// TestTenantAttribution_OrganizationID verifies that organization_id takes
+// priority over subscription/group/user for tenant attribution.
+// Confirmed by Noy (via Kris, open questions doc) as "the right approach."
+func TestTenantAttribution_OrganizationID(t *testing.T) {
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	modelID := "org-attr-" + suffix
+
+	payload := fmt.Sprintf(`{
+		"specversion": "1.0",
+		"type": "inference.tokens.used",
+		"source": "maas-gateway",
+		"id": "org-attr-%s",
+		"time": "%s",
+		"subject": "jdoe",
+		"data": {
+			"user": "jdoe",
+			"group": "finance-team",
+			"subscription": "ai-tenant-acme/premium-sub@models/llama-3",
+			"organization_id": "acme-corp",
+			"model": "%s",
+			"prompt_tokens": 100,
+			"completion_tokens": 50,
+			"duration_ms": 500
+		}
+	}`, suffix, time.Now().UTC().Format(time.RFC3339), modelID)
+
+	resp, err := http.Post(testServer.URL+"/api/v1/events", "application/json",
+		bytes.NewReader([]byte(payload)))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	var tenant string
+	testStore.Pool().QueryRow(context.Background(),
+		"SELECT tenant FROM inventory_model WHERE model_id = $1", modelID).Scan(&tenant)
+	if tenant != "acme-corp" {
+		t.Errorf("expected tenant = acme-corp (from organization_id), got %s", tenant)
+	}
+}
+
+// TestTenantAttribution_SubscriptionNamespace verifies that the ai-tenant-{name}
+// prefix is stripped when parsing tenant from subscription namespace.
+// Format confirmed by Mpaul (Slack #wg-osac-maas 2026-07-09).
+func TestTenantAttribution_SubscriptionNamespace(t *testing.T) {
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	modelID := "sub-attr-" + suffix
+
+	payload := fmt.Sprintf(`{
+		"specversion": "1.0",
+		"type": "inference.tokens.used",
+		"source": "maas-gateway",
+		"id": "sub-attr-%s",
+		"time": "%s",
+		"subject": "jdoe",
+		"data": {
+			"user": "jdoe",
+			"group": "finance-team",
+			"subscription": "ai-tenant-globex/standard-sub@models/codestral",
+			"model": "%s",
+			"prompt_tokens": 200,
+			"completion_tokens": 100,
+			"duration_ms": 800
+		}
+	}`, suffix, time.Now().UTC().Format(time.RFC3339), modelID)
+
+	resp, err := http.Post(testServer.URL+"/api/v1/events", "application/json",
+		bytes.NewReader([]byte(payload)))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	var tenant string
+	testStore.Pool().QueryRow(context.Background(),
+		"SELECT tenant FROM inventory_model WHERE model_id = $1", modelID).Scan(&tenant)
+	// "ai-tenant-globex" → stripped to "globex"
+	if tenant != "globex" {
+		t.Errorf("expected tenant = globex (ai-tenant- prefix stripped), got %s", tenant)
+	}
+}
+
 // TestBalanceCheckResponseFormat verifies the balance check endpoint returns
 // the exact response format expected by the IPP external-metering plugin.
 // Source: https://github.com/opendatahub-io/ai-gateway-payload-processing/blob/61b6160/pkg/plugins/external-metering/client.go

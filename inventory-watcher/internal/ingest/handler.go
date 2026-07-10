@@ -350,7 +350,11 @@ func (h *Handler) handleModelEvent(ctx context.Context, ce CloudEvent) error {
 	}
 	if data.TenantID == "" && data.Subscription != "" {
 		if idx := strings.Index(data.Subscription, "/"); idx > 0 {
-			data.TenantID = data.Subscription[:idx]
+			ns := data.Subscription[:idx]
+			// AITenant namespaces use "ai-tenant-{name}" convention.
+			// Confirmed by Mpaul (Slack #wg-osac-maas 2026-07-09),
+			// Noy (via Kris, open questions doc). See docs/research/maas-tenant-attribution.md
+			data.TenantID = strings.TrimPrefix(ns, "ai-tenant-")
 		}
 	}
 	if data.TenantID == "" && data.Group != "" {
