@@ -1,6 +1,9 @@
 FROM mcr.microsoft.com/devcontainers/go:1-1.24-bookworm
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Remove the stale yarn repo that ships with the base image — its GPG key
+# is expired and breaks apt-get update in Codespaces.
+RUN rm -f /etc/apt/sources.list.d/yarn.list 2>/dev/null; \
+    apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-venv \
     libpq-dev \
