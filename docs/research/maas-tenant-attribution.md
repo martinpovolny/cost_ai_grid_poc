@@ -3,37 +3,79 @@
 > How to attribute MaaS inference costs to the correct OSAC tenant and
 > project, given the identity fields available in IPP CloudEvents.
 >
-> Date: 2026-07-04
+> Date: 2026-07-04 | Updated: 2026-07-10
 
-## Key Question: Direct Routing or OSAC Enrichment?
+## Confirmed Findings (July 2026)
 
-Can IPP CloudEvents come directly to our cost pipeline, or do they need
-to go through OSAC first for enrichment?
+The following claims from this document have been confirmed by OSAC/MaaS
+team members via comments on our
+[open questions doc](https://docs.google.com/document/d/10pc_EJXKd0FZwA53uyk0SRJZ1HjyPuxKrYcXoOyHlgk)
+and Slack (#wg-osac-maas).
 
-**Answer: UNCERTAIN — needs confirmation from OSAC/RHOAI team.**
+**Confirmed by Moti Asayag (comment on open questions doc):**
+- OSAC maps `organization` → `tenant` and `groups` → `projects`
+  via Keycloak. The `project_id` in OSAC is retrieved from Keycloak
+  groups.
 
-The IPP CloudEvent carries `user`, `group`, and `subscription` but no
-`tenant_id` or `project_id`. We initially assumed the subscription field
-would carry `{namespace}/{name}` where the namespace is the OSAC tenant.
+**Confirmed by Noy Itzikowitz (relayed by Kris Verlaenen in comment on open questions doc):**
+- **Q1 (subscription namespace = tenant):** Yes — with AITenant
+  multi-tenancy enabled, subscriptions live in `ai-tenant-{name}`
+  namespaces, so parsing works for PoC. But it's a naming convention,
+  not an API contract — don't build on it long-term. Also note that
+  with API-key auth the subscription is snapshotted at key creation.
+- **Q2 (propagate TokenMetadata into CloudEvent):** Feasible and "the
+  right approach." Wiring: `maas-api` key-validation response returns
+  `organizationId`/`costCenter` → AuthPolicy adds `X-MaaS-OrgId` /
+  `X-MaaS-CostCenter` headers (same CEL pattern as existing headers)
+  → external-metering plugin picks them up into CycleState and adds
+  to CloudEvent data. Extending the check-balance request with the
+  same fields is trivial on the plugin side. Bigger question: should
+  entitlements be keyed by tenant rather than user? Needs design
+  discussion.
+- **Q3 (project_id for MaaS):** Needs a product decision — natural
+  candidates are the subscription (billing construct) or the model
+  deployment namespace.
 
-**However,** the [MaaSSubscription e2e report](https://github.com/opendatahub-io/ai-gateway-payload-processing/blob/main/test/e2e/reports/3.4/external-model-e2e-report.md)
-shows that MaaSSubscription CRs live in a shared MaaS deployment
-namespace, not in per-tenant namespaces. The subscription value in the
-CloudEvent may be just a name (e.g., `external-models-subscription`),
-not a `{tenant-namespace}/{name}` pair.
+**Confirmed by Mriganka Paul (Slack #wg-osac-maas, 2026-07-09):**
+- Phase 1: 1 cluster = 1 tenant (cluster identity is the tenant)
+- Future: tenant parsed from `subscription` field format:
+  `ai-tenant-{tenantName}/{subName}@{modelNs}/{modelName}` when
+  AITenant multi-tenancy is enabled
+- IPP external-metering plugin emits `inference.tokens.used`
+  CloudEvents to configurable `meteringURL` — this is our ingest
+  endpoint
 
-**Current fallback chain in our code** (best-effort, needs validation):
-1. If `subscription` contains `/` → extract prefix as tenant (may not be correct)
-2. If `group` is set → use as tenant (K8s group from Authorino)
-3. Fall back to `user` (username from Authorino)
+**Implemented and tested (PR #39, experiment report):**
+- `organization_id` flows end-to-end: `x-maas-organization-id` header
+  → CloudEvent `data.organization_id` → cost consumer `tenant_id`
+  on metering entries. ~30 lines across two repos. See
+  [tenant attribution experiment](../dev/tenant-attribution-experiment-2026-07-08.md).
 
-**What we need** (in order of preference):
-1. **Explicit `X-MaaS-Tenant` header** injected by the Authorino
-   AuthPolicy and surfaced in the CloudEvent `data.tenant_id` field.
-   The auth layer already knows the tenant — it just doesn't expose it.
-2. **Confirmation** that subscription namespace = tenant (if the
-   deployment model puts subscriptions in per-tenant namespaces)
-3. **Lookup table** mapping subscription → tenant (if neither above works)
+---
+
+## Key Question: How Does Tenant Attribution Work?
+
+**Answer: CONFIRMED** — three approaches validated, in order of maturity:
+
+1. **`organization_id` from TokenMetadata** (confirmed by Noy as "the
+   right approach") — propagate `organizationId` from MaaSSubscription
+   CRD through Authorino headers to CloudEvent. Implemented and tested
+   in PR #39. Requires small upstream changes in `maas-api` + AuthPolicy.
+
+2. **Parse subscription namespace** (confirmed by Noy and Mpaul) — with
+   AITenant enabled, subscription key format is
+   `ai-tenant-{tenantName}/{subName}@{modelNs}/{modelName}`. Parsing
+   the namespace works for PoC but is a naming convention, not an API
+   contract.
+
+3. **OSAC mapping: organization → tenant, groups → projects** (confirmed
+   by Moti) — Keycloak groups map to OSAC projects, organizations map
+   to tenants. This is the authoritative model.
+
+**Current implementation in our code** (PR #39):
+1. If `organization_id` is set → use as `tenant_id`
+2. Parse subscription namespace as fallback
+3. Fall back to `group`, then `user` (username from Authorino)
 
 ## The Problem
 
@@ -158,24 +200,25 @@ The `subscription` field is the strongest link to OSAC tenant attribution
 because **MaaSSubscription CRs are namespace-scoped**. The namespace
 is the tenant boundary.
 
-### MaaSSubscription Format — UNCERTAIN
+### MaaSSubscription Format — CONFIRMED
 
-We initially assumed the subscription field would follow:
+**Confirmed by Noy and Mpaul:** With AITenant multi-tenancy enabled,
+the Authorino-resolved subscription key follows:
 ```
-{tenantNamespace}/{subscriptionName}
-```
-
-However, the [MaaSSubscription e2e report](https://github.com/opendatahub-io/ai-gateway-payload-processing/blob/main/test/e2e/reports/3.4/external-model-e2e-report.md)
-shows the CR living in a shared MaaS namespace with a plain name:
-```yaml
-kind: MaaSSubscription
-metadata:
-  name: external-models-subscription
-  namespace: <maas-namespace>   # shared, NOT per-tenant
+{subscriptionNamespace}/{subscriptionName}@{modelNamespace}/{modelName}
 ```
 
-The subscription value in the CloudEvent may be just the name, not a
-`{namespace}/{name}` pair. **Needs confirmation.**
+Example: `ai-tenant-acme/premium-sub@models/llama-3`
+
+The subscription namespace is `ai-tenant-{tenantName}`, so parsing
+the tenant is: split on `/`, take the first segment, strip the
+`ai-tenant-` prefix.
+
+**Caveats (from Noy):**
+- This is a naming convention, not an API contract
+- With API-key auth, the subscription is snapshotted at key creation time
+- Don't build production billing on namespace parsing long-term — use
+  `organization_id` from TokenMetadata instead
 
 ## Current State in Our Code
 
@@ -281,20 +324,29 @@ already has access to the subscription namespace — it could inject
 
 **Effort on our side:** Trivial. Requires upstream coordination.
 
-### Recommended Path
+### Recommended Path (updated with confirmations)
 
-1. **Now (PoC):** Implement Option 1 — parse subscription namespace.
-   Works immediately, no coordination needed.
-2. **Meeting question:** Propose Option 3 to the IPP team — adding
-   `tenant_id` upstream is cleaner long-term.
-3. **Production:** Option 2 if tenant/project mapping is more complex
-   than namespace parsing.
+1. **Done (PR #39):** `organization_id` propagation tested end-to-end.
+   Upstream PR submitted:
+   [ai-gateway-payload-processing#386](https://github.com/opendatahub-io/ai-gateway-payload-processing/pull/386)
 
-### Meeting Question to Add
+2. **Next:** Get `maas-api` key-validation endpoint to return
+   `tokenMetadata.organizationId` and `costCenter`. Then the AuthPolicy
+   wiring is automatic (same CEL pattern as existing headers). This is
+   the path Noy confirmed as correct.
 
-> **MaaS tenant attribution:** The IPP CloudEvent has `user`, `group`,
-> `subscription` but no `tenant_id`. We plan to derive tenant from the
-> subscription namespace (e.g., `tenant-acme/premium-sub` → `tenant-acme`).
-> Is this the correct mapping? Would it be feasible to add a
-> `X-MaaS-Tenant` header in the AuthPolicy and a `tenant_id` field in
-> the CloudEvent data payload?
+3. **Production:** Entitlements keyed by tenant instead of user (design
+   discussion needed per Noy). Project_id mapping needs product decision
+   (subscription vs model namespace).
+
+### Remaining Open Items
+
+- **Entitlements by tenant vs user:** Noy flagged that extending the
+  check-balance request with org fields is trivial on the plugin side,
+  but whether entitlements should be keyed by tenant rather than user
+  needs a design discussion.
+- **project_id for MaaS:** Candidates are the subscription (billing
+  construct) or the model deployment namespace. Needs product decision.
+- **OSAC mapping confirmation:** Moti confirmed org→tenant, groups→projects
+  via Keycloak, but we haven't validated this in a running OSAC
+  environment with real Keycloak groups.
