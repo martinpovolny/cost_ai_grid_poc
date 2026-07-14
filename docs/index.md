@@ -58,7 +58,7 @@ HTTP ingest endpoint ──► MaaS / custom events ──►   quota status API
 | [Implementation status](implementation-status.md) | Every requirement with JIRA link, rank, status, and code links |
 | [Requirements overview](requirements/poc_requirements_overview.md) | Canonical spec (v1.2) with priority ranking |
 | [Requirements comparison](requirements/requirements-comparison.md) | Updated spec vs original brief |
-| [OSAC open questions](requirements/osac-open-questions.md) | 20 open questions for the OSAC team |
+| [OSAC open questions](requirements/osac-open-questions.md) | 23 open questions for the OSAC team |
 | [Req #1 gap analysis](requirements/req1-osac-integration-gap-analysis.md) | OSAC integration |
 | [Req #2 gap analysis](requirements/req2-maas-costing-gap-analysis.md) | MaaS token metering |
 | [Req #8 gap analysis](requirements/req8-bare-metal-gap-analysis.md) | Bare metal costing |

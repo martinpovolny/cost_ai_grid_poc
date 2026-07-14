@@ -1,7 +1,7 @@
 # AI Grid PoC — Cost Management Requirements
 
-**Version:** 1.3
-**Date:** July 2, 2026
+**Version:** 1.4
+**Date:** July 14, 2026
 **Status:** Hardening (Still in Flux)
 
 This document is the consolidated requirements reference for the Cost Management AI Grid Proof of Concept. It merges the initial requirements brief with the detailed requirements summary. MaaS (token metering and OpenShift AI cloud events), Cost Tiers, and Custom Metrics are included as in-scope PoC requirements.
@@ -223,6 +223,12 @@ Single system of record for cost data with drill-down by tenant, project, model,
 - Core RHCM cost tracking and reporting capability exists in-product
 - Dashboard and export functionality are in-product
 
+**Open Questions:**
+- **PII concern for per-user attribution (raised Jul 14, 2026 meeting):** If
+  MaaS CloudEvents carry per-user identifiers (`user_id`, `subscription_id`),
+  drilling down by "user" could expose who consumed how much Action Item for Pau to investigate. **Not
+  resolved** — see [osac-open-questions.md #21](osac-open-questions.md#data-privacy--pii-maas).
+
 **Scope:**
 - IN: Granular cost breakdowns at listed dimensions for both capacity and MaaS workloads
 - OUT: Account hierarchy management. FOCUS export (but desirable if we have to choose something).
@@ -257,6 +263,7 @@ Provide a workflow to allow OSAC to check quota and budget status before allowin
 **Open Questions:**
 - Do AI Grid requirements include grace periods?
 - Open question: is RHCM or OSAC the source of truth for quota/budget data? It does not matter: RHCM must implement quotas anyway (for non-OSAC customers) and typically who the source of truth is is resolved at implementation time via Professional Services (the source of truth could be a third system, e.g. ServiceNow, that is synchornized to both OSAC and RHCM).
+- **Budget quotas vs usage quotas need different mechanisms (Jul 14, 2026 meeting, Ronnie):** Usage quotas (VM count, storage, etc.) need a synchronous pre-check during provisioning — OSAC can't rely on an eventually-consistent notification without risking duplicated state, so the pull-based quota API (this requirement) is the right fit. Budget quotas (monetary) are more tolerant of eventual consistency, so a push notification model (REQ-10) is also viable there — the two requirements aren't fully interchangeable. See REQ-10 below.
 
 **Scope:**
 - IN: Read-only quota/budget status API for OSAC consumption
@@ -285,10 +292,20 @@ Send threshold notifications from RHCM to OSAC when cost/quota consumption hits 
 - Push (webhook) model deferred — transport not yet agreed with OSAC
 - Jun 24 meeting: transport options discussed (webhook, Kafka, cloud events)
 - Jul 2 meeting: parked; pull model accepted as sufficient for PoC
+- **Jul 14, 2026 meeting:** Still parked — Moti confirmed OSAC has **no
+  receiver** today to act on any notification event (would be audit-only
+  at best). However, Martin noted adding push support on Cost's side is
+  low effort ("by end of week or sooner") **if** OSAC provides a concrete
+  CloudEvent spec for what they want to receive — the blocker is on OSAC's
+  side (define receiver + schema), not Cost's. Ronnie also noted budget
+  quotas specifically (vs. usage quotas) are a good candidate for the
+  event model since they don't need synchronous consistency — see REQ-9.
 
 **Open Questions:**
 - Does OSAC have an existing alerting mechanism? (deferred)
 - Transport: Kafka, HTTP, NATS, CloudEvents? (deferred)
+- Action item: if/when OSAC defines a receiver, Cost team to
+  prepare an example CloudEvent spec for budget threshold alerts so OSAC can review it.
 
 **Scope:**
 - IN: Threshold notification mechanism from RHCM to OSAC (**parked, no timeline set**)
@@ -347,11 +364,25 @@ Consume CloudEvents from OpenShift AI 3.5 for token metering. OSAC emits CloudEv
 - Custom IPP plugins may be needed
 
 **Open Questions:**
-- Who collects RHOAI MaaS metrics — Cost or OSAC?
+- Who collects RHOAI MaaS metrics — Cost or OSAC? **Update (Jul 14, 2026
+  meeting):** Moti is designing an OSAC-side metering service to be the
+  single collection point with adapters to downstream systems (Cost,
+  M360, OpenMeter), which would make Cost a pure consumer — but this is
+  an early draft, unreviewed, and Moti is not confident it lands by end
+  of July. For the PoC, the current direct real-time integration path
+  (Martin ↔ Noy) continues in parallel as the fallback; if OSAC's
+  collector is ready in time we integrate with it, otherwise we ship
+  with the direct path. Still not fully resolved.
 - What fields will OSAC MaaS CloudEvents contain?
-- **Do events include `tenant_id` and `project_id` attribution?** — Martin verifying via Noy's emulator (action from Jul 2 meeting). If missing, OSAC may need to act as middleman. (~00:28:50–00:32:02)
+- **Do events include `tenant_id` and `project_id` attribution?** — Martin verifying via Noy's emulator (action from Jul 2 meeting). If missing, OSAC may need to act as middleman.
+  **Update (Jul 14, 2026 meeting):** Noy's PR (adding project/tenant
+  attributes to the relevant OSAC entity) has been merged; Martin's
+  follow-on changes on top of it were reviewed and approved by Noy
+  conceptually, but need to be re-applied as a fresh PR since Noy's PR
+  landed first. Martin is preparing that new PR now. Mapping confirmed:
+  OSAC `cost_center` → Cost `project`; OSAC `tenant` → Cost `tenant`.
 - Transport for MaaS events: HTTP, Kafka, other?
-- Who defines the MaaS rate structure: Cost team, OSAC, or agreed jointly?
+- Who defines the MaaS rate structure: Cost team, OSAC, or agreed jointly? **Update (Jul 14, 2026 meeting):** Pau, not delivered — see REQ-11 current state.
 
 **Related Ticket:** COST-7164
 
@@ -377,6 +408,20 @@ Read OSAC service catalog for pricing. Manual setup acceptable for PoC; API sync
 - Existing per-cluster/per-VM cost models may partially work
 - Catalog lives in OSAC; RHCM is a downstream consumer
 - OSAC core team owns catalog
+- **Update (Jul 14, 2026 meeting):** Moti flagged an upcoming OSAC change
+  removing CPU/memory from `ComputeInstance`'s spec entirely — the
+  measured/billable unit becomes `instance_type` only. This validates the
+  catalog-item-based pricing approach already required above (price the
+  catalog item, not a function of raw CPU/memory). Action item: Martin to
+  explicitly verify RHCM's cost calculation works purely from
+  `instance_type` and doesn't silently break once CPU/memory fields
+  disappear from the OSAC API.
+- **Update (Jul 14, 2026 meeting):** Bare metal events and catalog items
+  are both currently missing from OSAC's public gRPC stream
+  (private-only). Martin confirmed with Aishay this should be fixed on
+  the public API (not by using the private stream) — Martin will file a
+  PR or coordinate with the OSAC team to expose both. See
+  [osac-open-questions.md items 3, 4, 6](osac-open-questions.md).
 
 **Scope:**
 - IN: Read OSAC catalog and apply capacity-based rates
@@ -396,6 +441,18 @@ Export chargeback reports covering both capacity-based (provisioned compute hour
 
 **Current State:**
 - Core RHCM chargeback capability exists in-product
+- **Update (Jul 14, 2026 meeting):** No formal export requirements exist
+  beyond "export the data so it can be used to generate bills" — confirmed
+  by Pau, nothing more specific in the AI Grid requirements. CSV export
+  already works and fields can be added quickly on request. Martin has a
+  spike branch adding FOCUS-style export; the main gap is missing
+  fields that depend on data we don't have yet (SKUs, product family —
+  tied to the service catalog, see REQ-3b), not implementation
+  complexity. Consensus: a Cost-owned custom export format (with
+  adapters, similar to how Koku adapts for Ibexa/Zora) is acceptable
+  until a specific billing-format requirement shows up. Action item:
+  Martin to double-check that CSV export covers every field we currently
+  track (open-ended, no specific gap identified yet).
 
 **Scope:**
 - IN: Chargeback reports for all PoC workloads (capacity and MaaS)
@@ -434,6 +491,13 @@ Tiered pricing support for both capacity-based and MaaS consumption-based rates.
 - Tiered pricing implemented in the PoC rate engine for MaaS token rates (per-event semantics)
 - Capacity-based cumulative tier logic (GiB-month, core-hours) is a gap — requires period-accumulating semantics not yet implemented
 - See [req11 gap analysis](req11-cost-tiers-gap-analysis.md) for full breakdown and implementation options
+- **Still outstanding as of Jul 14, 2026 meeting:** Pau owns writing the
+  actual rules/spec for MaaS quotas, budgets, tiers, and rates (free tier
+  → next tier → combining metrics/events, etc.) — action item carried
+  over from the prior week, still not delivered. Martin has done a quick
+  spike integrating GoRules for some rates in a branch marked "spike" in
+  the AI repo, to validate feasibility ahead of the spec landing; he'll
+  reconcile it against whatever Pau writes up.
 
 **Open Questions:**
 - None
@@ -553,6 +617,11 @@ MFA, granular RBAC for billing admins, and short-lived auth tokens.
 | 15 | Bare Metal | ~~Should Have~~ **Parked** | ~~Investigate node-outside-OCP gap~~ Deferred from Jul 31 PoC scope |
 | 16 | Tenancy | Should Have | Implement OSAC project entities in Cost Management |
 | 17 | Tenancy | Should Have | Determine RBAC needs for cross-project visibility |
+| 18 | Cost Tiers / Quotas | Must Have | Pau to write the rules/spec for MaaS quotas, budgets, tiers, and rates (carried over, still not delivered as of Jul 14) |
+| 19 | Data Privacy | Should Have | Pau to confirm with OpenShift AI PMs (and legal, if needed) whether per-user MaaS attribution (`user_id`, `subscription_id`) raises PII concerns |
+| 20 | Exports | Should Have | Martin to double-check CSV export covers every field currently tracked |
+| 21 | Service Catalog | Should Have | Martin to verify cost calculation works purely from `instance_type` ahead of OSAC removing CPU/memory from `ComputeInstance` |
+| 22 | OSAC Integration | Should Have | Martin to file/coordinate a PR to expose bare metal events and catalog items on OSAC's public gRPC stream |
 
 ---
 
@@ -574,18 +643,33 @@ MFA, granular RBAC for billing admins, and short-lived auth tokens.
 
 | Decision | Direction | Open Items |
 |----------|-----------|------------|
-| **MaaS event attribution** | OSAC forwards MaaS events to Cost with `tenant_id` + `project_id` fields included. | Martin verifying via Noi's MaaS emulator (action from Jul 2 meeting). If fields missing, OSAC may need to act as middleman. |
+| **MaaS event attribution** | OSAC forwards MaaS events to Cost with `tenant_id` + `project_id` fields included. Mapping confirmed: OSAC `cost_center` → Cost `project`; OSAC `tenant` → Cost `tenant`. | Noy's upstream PR (adding the attributes) merged Jul 14; Martin's follow-on PR (rebasing his changes on top, previously approved by Noy conceptually) is being re-submitted. Not yet merged. |
+| **MaaS collection ownership** | Long-term: OSAC-side metering service collects all events and forwards to Cost/M360/OpenMeter via adapters (Cost becomes a pure consumer). For the Jul 31 PoC: keep the current direct real-time integration (Martin ↔ Noy) as the primary/fallback path. | Moti's design is an early, unreviewed draft; not confident it lands by end of July. Revisit after PoC if it's ready. |
 
 ### Unresolved
 
 | Decision | Options | Impact |
 |----------|---------|--------|
 | **Cost tier ownership** | Cost only / OSAC only / Both synced | Shapes rate engine design and sync complexity (REQ-11) |
-| **Provider UI surface** | Cost Management UI / OSAC fetches from Cost API | Determines whether Cost needs project-scoped RBAC and project entity management |
-| **MaaS metric collection** | Cost collects directly from RHOAI / OSAC collects and forwards to Cost | Defines integration boundary and data pipeline ownership (REQ-2a, REQ-4); currently blocked on OSAC MaaS CloudEvent schema |
+| **Provider UI surface** | Cost Management UI / OSAC fetches from Cost API / generic OSAC-hosted UI + adapter abstraction for any billing backend | Determines whether Cost needs project-scoped RBAC and project entity management. Jul 14, 2026 meeting: Moti/Pau raised needing an abstraction layer for metering, catalog, *and* UI — not just data — so any billing backend (Cost, M360, OpenMeter, third party) presents a consistent experience inside OSAC. Unresolved whether feasible for Jul 31/Aug 31; see [osac-open-questions.md #16](osac-open-questions.md#tenantproject-attribution-req-3a). |
+| **MaaS metric collection** | Cost collects directly from RHOAI / OSAC collects and forwards to Cost | Defines integration boundary and data pipeline ownership (REQ-2a, REQ-4); currently blocked on OSAC MaaS CloudEvent schema. Jul 14, 2026 meeting: Moti is drafting an OSAC-side metering/adapter design for the former, timeline uncertain (may not land by Jul 31); PoC continues building the direct-integration path as fallback. |
 | **Three-way convergence** | SaaS cost management, on-prem Koku, OSAC PoC cannot be maintained separately long-term. | EMR meeting expected next week to set direction. Outcome affects RBAC approach (InsightsRBAC vs Keycloak) and long-term architecture. |
+| **Catalog price override by tenant** | (a) CSP-only pricing / (b) per-tenant pricing overrides / (c) tenant admins creating their own priced sub-offerings for their users | Raised by Moti (Jul 14, 2026 meeting), no answer yet from OSAC. Affects catalog/rate-lookup design in REQ-3b and REQ-13. See [osac-open-questions.md #22](osac-open-questions.md#catalog-pricing-model). |
 
 ---
+
+**Changelog — v1.4 (Jul 14, 2026 meeting):**
+- REQ-3: new open question — potential PII concern for per-user MaaS cost attribution; (not resolved)
+- REQ-9/REQ-10: added budget-quota-vs-usage-quota distinction (Ronnie) — usage quotas need the pull API, budget quotas could also use a push model; REQ-10 remains parked pending an OSAC-side receiver, but adding it is low-effort for Cost once OSAC provides a spec
+- REQ-11: rate/tier spec still owed by Pau (carried over); Martin has a GoRules integration spike in a branch for reference
+- REQ-2a: MaaS tenant/project attribution PR progress (Noy's PR merged; Martin's follow-on PR in flight); added new "MaaS collection ownership" leaning entry (OSAC single-collector design vs. current direct-integration fallback for the PoC)
+- REQ-3b: added note on upcoming OSAC `ComputeInstance` change (CPU/memory removed, `instance_type` becomes the only unit) and an action item to verify the cost model isn't affected; noted bare metal + catalog items missing from the public gRPC stream
+- REQ-5: clarified there's no formal export requirement beyond "export data to generate bills"; FOCUS spike branch exists, gap is catalog/SKU fields not implementation complexity
+- New unresolved decision: catalog price override by tenant (can tenants override CSP prices or create their own priced sub-offerings?)
+- Provider UI surface decision expanded: abstraction layer needed for metering, catalog, and UI (not just data), so any billing backend can present consistently inside OSAC
+- Action items table: added rows 18–22 (rate/tier spec, PII check, export completeness check, instance-type costing verification, public-stream PR)
+- Next meeting moved to July 21, 2026 (from July 20)
+- See [osac-open-questions.md](osac-open-questions.md) items 21–23 (new) and updates to items 3, 4, 6, 7, 10, 16 for the corresponding OSAC-facing open questions
 
 **Changelog — v1.3 (Jul 2, 2026 meeting):**
 - REQ-8 (bare metal): deferred from July 31 PoC scope
