@@ -28,7 +28,6 @@ import (
 	"github.com/osac-project/cost-event-consumer/internal/rating"
 	"github.com/osac-project/cost-event-consumer/internal/reconciler"
 	"github.com/osac-project/cost-event-consumer/internal/splunk"
-	"github.com/osac-project/cost-event-consumer/internal/summarizer"
 	"github.com/osac-project/cost-event-consumer/internal/watcher"
 )
 
@@ -84,7 +83,6 @@ func main() {
 	}
 
 	m := metering.New(store, cfg.MeteringInterval, logger)
-	s := summarizer.New(store, cfg.SummarizeInterval, logger)
 	rt := rating.New(store, cfg.RatingInterval, logger)
 
 	var w *watcher.Watcher
@@ -107,7 +105,6 @@ func main() {
 	logger.Info("starting cost-event-consumer",
 		"osac_url", cfg.OSACBaseURL,
 		"reconcile_interval", cfg.ReconcileInterval,
-		"summarize_interval", cfg.SummarizeInterval,
 		"metering_interval", cfg.MeteringInterval,
 		"rating_interval", cfg.RatingInterval,
 		"ingest_addr", cfg.IngestListenAddr,
@@ -130,7 +127,6 @@ func main() {
 	if r != nil {
 		startComponent("reconciler", func() error { return r.Run(ctx) })
 	}
-	startComponent("summarizer", func() error { return s.Run(ctx) })
 	startComponent("metering", func() error { return m.Run(ctx) })
 	startComponent("rating", func() error { return rt.Run(ctx) })
 

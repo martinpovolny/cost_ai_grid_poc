@@ -2,7 +2,7 @@
 
 ## Overview
 
-The inventory-watcher uses PostgreSQL (port 5434) with 14 tables organized
+The inventory-watcher uses PostgreSQL (port 5434) with tables organized
 into two groups:
 
 1. **Inventory & Events** — raw event log and current state of OSAC resources
@@ -24,6 +24,7 @@ into two groups:
 | Table | Go Model | Purpose |
 |---|---|---|
 | `raw_events` | [`RawEvent`](../inventory-watcher/internal/inventory/models.go) | Append-only audit log. No unique constraint by default (throughput). Add `CREATE UNIQUE INDEX ON raw_events (event_id)` for dedup at cost of ~10% ingest speed. |
+| `inventory_tenant` | [`TenantRecord`](../inventory-watcher/internal/inventory/models.go) | OSAC tenants — top-level grouping for all resources. |
 | `inventory_project` | [`ProjectRecord`](../inventory-watcher/internal/inventory/models.go) | OSAC projects (Tenant → Project hierarchy). |
 | `inventory_compute_instance` | [`ComputeInstanceRecord`](../inventory-watcher/internal/inventory/models.go) | VMs tracked from OSAC. `last_metered_at` for duration-based metering. |
 | `inventory_cluster` | [`ClusterRecord`](../inventory-watcher/internal/inventory/models.go) | Clusters with `node_sets` JSONB for worker node tracking. |
@@ -35,10 +36,11 @@ into two groups:
 
 ### Relationships
 
-- **Tenant** is a string field on all inventory tables (not a separate table —
-  tenants are tracked implicitly via resource ownership)
+- **Tenant** (`inventory_tenant`) is the top-level grouping; all inventory tables reference it via a `tenant` text field
 - **Project** links to resources via the `tenant` field (same tenant scope)
-- **InstanceType** is referenced by `inventory_compute_instance.instance_type`
+- **InstanceType** is referenced by `inventory_compute_instance.instance_type` — used to enrich cores/memory when OSAC doesn't carry them on the instance
+- **CatalogItem** is referenced by `inventory_bare_metal_instance.catalog_item`
+- **Cluster** is referenced by `inventory_compute_instance.cluster_id`
 - **raw_events** feeds all inventory tables via the watcher/ingest pipeline
 
 ## ERD: Metering, Rating & Quotas
@@ -79,6 +81,7 @@ Produced by [`internal/metering/metering.go`](../inventory-watcher/internal/mete
 | `vm_memory_gib_seconds` | compute_instance | gib_seconds | memory_gib × duration |
 | `cluster_uptime_seconds` | cluster | seconds | duration |
 | `cluster_worker_node_seconds` | cluster | node_seconds | Σ(node_set_size × duration) |
+| `cluster_worker_node_count` | cluster | nodes | Σ(node_set_size) — snapshot |
 | `bm_uptime_seconds` | bare_metal | seconds | duration |
 
 **Consumption-based (event-driven):**
@@ -105,12 +108,6 @@ applied in [`rating.go`](../inventory-watcher/internal/rating/rating.go) → `ap
 
 Algorithm: iterate tiers, consume units at each tier's price until value
 exhausted. `up_to: null` means "everything above the previous tier."
-
-### Supplementary Table
-
-| Table | Go Model | Purpose |
-|---|---|---|
-| `daily_usage_summary` | [`DailyUsageSummary`](../inventory-watcher/internal/inventory/models.go) | Legacy daily aggregates from the original summarizer. Superseded by `metering_entries` + `cost_entries`. |
 
 ## Rebuilding the Diagrams
 

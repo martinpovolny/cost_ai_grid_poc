@@ -14,7 +14,6 @@ type Config struct {
 	OSACCACert         string
 	InventoryDBURL     string
 	ReconcileInterval  time.Duration
-	SummarizeInterval  time.Duration
 	MeteringInterval   time.Duration
 	RatingInterval     time.Duration
 	LogLevel           string
@@ -37,7 +36,6 @@ type DiagnosticInfo struct {
 	OSACBaseURL       string `json:"osac_base_url"`
 	InventoryDBHost   string `json:"inventory_db_host"`
 	ReconcileInterval string `json:"reconcile_interval"`
-	SummarizeInterval string `json:"summarize_interval"`
 	MeteringInterval  string `json:"metering_interval"`
 	RatingInterval    string `json:"rating_interval"`
 	LogLevel          string `json:"log_level"`
@@ -59,7 +57,6 @@ func (c *Config) Diagnostics() DiagnosticInfo {
 		OSACBaseURL:       c.OSACBaseURL,
 		InventoryDBHost:   maskDBURL(c.InventoryDBURL),
 		ReconcileInterval: c.ReconcileInterval.String(),
-		SummarizeInterval: c.SummarizeInterval.String(),
 		MeteringInterval:  c.MeteringInterval.String(),
 		RatingInterval:    c.RatingInterval.String(),
 		LogLevel:          c.LogLevel,
@@ -111,7 +108,6 @@ func Load() *Config {
 		OSACCACert:         envOrDefault("OSAC_CA_CERT", ""),
 		InventoryDBURL:     envOrDefault("INVENTORY_DB_URL", "postgres://user:pass@localhost:5434/costdb"),
 		ReconcileInterval:  durationOrDefault("RECONCILE_INTERVAL", 1*time.Hour),
-		SummarizeInterval:  durationOrDefault("SUMMARIZE_INTERVAL", 1*time.Hour),
 		MeteringInterval:   durationOrDefault("METERING_INTERVAL", 60*time.Second),
 		RatingInterval:     durationOrDefault("RATING_INTERVAL", 30*time.Second),
 		LogLevel:           envOrDefault("LOG_LEVEL", "info"),

@@ -223,7 +223,6 @@ async function fetchConfig() {
       cfgRow('Connection', cfg.inventory_db_host);
     $('cfgIntervals').innerHTML =
       cfgRow('Reconcile', cfg.reconcile_interval) +
-      cfgRow('Summarize', cfg.summarize_interval) +
       cfgRow('Metering Sweep', cfg.metering_interval) +
       cfgRow('Rating Sweep', cfg.rating_interval);
     $('cfgService').innerHTML =

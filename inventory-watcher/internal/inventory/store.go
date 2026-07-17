@@ -967,51 +967,6 @@ func (s *Store) ListAliveClusters(ctx context.Context) ([]ClusterRecord, error) 
 	return results, rows.Err()
 }
 
-// ComputeInstancesAliveDuring returns instances that overlapped with [start, end).
-func (s *Store) ComputeInstancesAliveDuring(ctx context.Context, start, end time.Time) ([]ComputeInstanceRecord, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT instance_id, name, tenant, project, cluster_id, instance_type, cores, memory_gib, state, labels, created_at, deleted_at, last_event_id, last_updated
-		FROM inventory_compute_instance
-		WHERE created_at < $2 AND (deleted_at IS NULL OR deleted_at > $1)
-	`, start, end)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var results []ComputeInstanceRecord
-	for rows.Next() {
-		var r ComputeInstanceRecord
-		if err := rows.Scan(&r.InstanceID, &r.Name, &r.Tenant, &r.Project, &r.ClusterID,
-			&r.InstanceType, &r.Cores, &r.MemoryGiB, &r.State, &r.Labels,
-			&r.CreatedAt, &r.DeletedAt, &r.LastEventID, &r.LastUpdated); err != nil {
-			return nil, err
-		}
-		results = append(results, r)
-	}
-	return results, rows.Err()
-}
-
-// InsertDailyUsageSummary writes a usage summary row.
-func (s *Store) InsertDailyUsageSummary(ctx context.Context, summary DailyUsageSummary) error {
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO daily_usage_summary
-			(usage_date, cluster_id, tenant, project, resource_id, resource_type, instance_type, cores, memory_gib, cpu_core_hours, memory_gb_hours, duration_hours)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-	`, summary.UsageDate, summary.ClusterID, summary.Tenant, summary.Project,
-		summary.ResourceID, summary.ResourceType, summary.InstanceType,
-		summary.Cores, summary.MemoryGiB,
-		summary.CPUCoreHours, summary.MemoryGBHours, summary.DurationHours)
-
-	return err
-}
-
-// DeleteDailyUsageSummaries removes summaries for a given date (to allow re-summarization).
-func (s *Store) DeleteDailyUsageSummaries(ctx context.Context, date time.Time) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM daily_usage_summary WHERE usage_date = $1`, date)
-	return err
-}
-
 // UpsertRate inserts or updates a rate definition.
 func (s *Store) UpsertRate(ctx context.Context, rec RateRecord) (int64, error) {
 	var tiersJSON []byte

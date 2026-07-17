@@ -214,9 +214,10 @@ Ordered by effort and impact:
 | 3 | **Parallel sweeps** — run metering/rating per resource_type concurrently | S | **3-4x** sweep speed | Before load testing |
 | 4 | **Async write buffer** — decouple HTTP response from DB commit | M | **3-5x** ingest throughput | If batching insufficient |
 | 5 | **Table partitioning** — partition metering_entries by period_start (monthly) | M | Query perf at scale | Before 3-month retention |
-| 6 | **Read replicas** — separate read (reports) from write (ingest) | L | Removes contention | Production |
-| 7 | **Horizontal sharding** — partition by tenant_id | L | Linear scaling | If single-instance ceiling hit |
-| 8 | **Kafka ingest** — decouple event receipt from processing | L | Backpressure + replay | If HTTP is the bottleneck |
+| 6 | **Daily cost summary table** — pre-aggregate cost_entries by day/tenant/resource_type/meter | S | **10-100x** report query speed | Before report API latency is noticeable |
+| 7 | **Read replicas** — separate read (reports) from write (ingest) | L | Removes contention | Production |
+| 8 | **Horizontal sharding** — partition by tenant_id | L | Linear scaling | If single-instance ceiling hit |
+| 9 | **Kafka ingest** — decouple event receipt from processing | L | Backpressure + replay | If HTTP is the bottleneck |
 
 ### MaaS-Specific Scaling Techniques
 
