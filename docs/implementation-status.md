@@ -53,7 +53,7 @@
 
 ### POC-ENV — On-Premise Deployment
 **Status:** Partial
-**Spec:** [csv_poc_requirements_summary.md#poc-env](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md#poc-env--on-premise-deployment)
+**Spec:** [poc_requirements_overview.md#poc-env](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#poc-env--on-premise-deployment)
 
 CRC deployment is documented and tested. Full RHCM on-prem (Helm/OLM)
 is a separate concern owned by the RHCM team.
@@ -71,7 +71,7 @@ is a separate concern owned by the RHCM team.
 
 ### POC-ARCH — Capacity-Based Charging Model
 **Status:** Done
-**Spec:** [csv_poc_requirements_summary.md#poc-arch](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md#poc-arch--capacity-based-charging-model)
+**Spec:** [poc_requirements_overview.md#poc-arch](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#poc-arch--capacity-based-charging-model)
 
 | Acceptance Criterion | Status | Implementation |
 |---|---|---|
@@ -86,7 +86,7 @@ is a separate concern owned by the RHCM team.
 
 ### REQ-1 — OSAC Integration via Region Management Cluster
 **Status:** Done
-**Spec:** [csv_poc_requirements_summary.md#req-1](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md#req-1--osac-integration-via-region-management-cluster)
+**Spec:** [poc_requirements_overview.md#req-1](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-1--osac-integration-via-region-management-cluster)
 
 | Acceptance Criterion | Status | Implementation |
 |---|---|---|
@@ -120,7 +120,7 @@ is a separate concern owned by the RHCM team.
 
 ### REQ-2 — Near-Real-Time Cost Calculation
 **Status:** Done
-**Spec:** [csv_poc_requirements_summary.md#req-2](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md#req-2--near-real-time-cost-calculation)
+**Spec:** [poc_requirements_overview.md#req-2](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-2--near-real-time-cost-calculation)
 
 | Acceptance Criterion | Status | Implementation |
 |---|---|---|
@@ -135,7 +135,7 @@ is a separate concern owned by the RHCM team.
 
 ### REQ-1a — Cluster Lifecycle via Cluster Orders
 **Status:** Done
-**Spec:** [csv_poc_requirements_summary.md#req-1a](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md#req-1a--osac-cluster-lifecycle-via-cluster-orders)
+**Spec:** [poc_requirements_overview.md#req-1a](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-1a--osac-cluster-lifecycle-via-cluster-orders)
 
 | Acceptance Criterion | Status | Implementation |
 |---|---|---|
@@ -171,7 +171,7 @@ is a separate concern owned by the RHCM team.
 
 ### REQ-3a — Tenant/Project Attribution
 **Status:** Done
-**Spec:** [csv_poc_requirements_summary.md#req-3a](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md#req-3a--osac-tenantproject-attribution)
+**Spec:** [poc_requirements_overview.md#req-3a](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-3a--osac-tenantproject-attribution)
 
 | Acceptance Criterion | Status | Implementation |
 |---|---|---|
@@ -209,7 +209,7 @@ resolution (see [OSAC open questions](requirements/osac-open-questions.md#bare-m
 
 ### REQ-9 — Quota/Budget Status API
 **Status:** Done
-**Spec:** [csv_poc_requirements_summary.md#req-9](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md#req-9--quotabudget-status-api)
+**Spec:** [poc_requirements_overview.md#req-9](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-9--quotabudget-status-api)
 
 | Acceptance Criterion | Status | Implementation |
 |---|---|---|
@@ -224,7 +224,7 @@ resolution (see [OSAC open questions](requirements/osac-open-questions.md#bare-m
 **Status:** Done (pull); push parked
 **Spec:** [poc_requirements_overview.md#req-10](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-10--threshold-notification-back-channel-to-osac)
 
-Pull model shipped: quota API's `alerts` field returns threshold flags
+Pull model shipped: quota API's `thresholds` field returns threshold flags
 at 50/70/90/100%. Push/webhook mechanism parked per Jul 2, 2026 decision —
 OSAC has no receiver today. Cost can add push support on short notice if
 OSAC provides a CloudEvent spec for what they want to receive.
@@ -332,7 +332,7 @@ full evaluation.
 
 ### REQ-3b — Service Catalog Sync from OSAC
 **Status:** Done
-**Spec:** [csv_poc_requirements_summary.md#req-3b](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/csv_poc_requirements_summary.md#req-3b--service-catalog-sync-from-osac)
+**Spec:** [poc_requirements_overview.md#req-3b](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-3b--service-catalog-sync-from-osac)
 **Gap Analysis:** [req3b-instance-type-only-gap-analysis.md](requirements/req3b-instance-type-only-gap-analysis.md)
 
 | Acceptance Criterion | Status | Implementation |
@@ -382,7 +382,6 @@ See also: [`snippets/query-costs.sh`](../snippets/query-costs.sh) for demo queri
 | Req | Title | Status | Notes |
 |---|---|---|---|
 | [REQ-6](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-6--platform-security--access-control) | Security & Access Control | N/A | In-product, no gap |
-| [REQ-7](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-7--reconciliation-auditing--dispute-tracing) | Reconciliation & Auditing | **Done** | `raw_events` + [Splunk HEC forwarding](splunk-audit-forwarding.md) |
 | [REQ-12](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-12--daily-openshift-virtualization-costs) | Daily OCP Virt Costs | TBD | Pending PM confirmation |
 | — | RBAC / Access Control for cost data | Not started | Track separately. Insights RBAC (Koku) vs Keycloak (OSAC). See [open question #18](requirements/osac-open-questions.md). Affects REQ-3a and REQ-6. |
 

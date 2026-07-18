@@ -100,7 +100,7 @@
 
 ## Threshold Notifications (REQ-10)
 
-10. **Quota alert mechanism shelved** — Per "Cost Management + OSAC"
+11. **Quota alert mechanism shelved** — Per "Cost Management + OSAC"
     meeting, 2026-07-02: "quota alert mechanism — deferred until after
     the PoC." Pull-based threshold checks (quota API + IPP balance check)
     are the agreed approach for now. Push webhooks not needed for PoC.

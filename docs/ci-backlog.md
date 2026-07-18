@@ -14,9 +14,8 @@ shipped in the initial version.
 
 ## Near-term
 
-- [ ] **Re-enable `golangci-lint`** — blocked on a release built with Go 1.26+
-  (v1.64 is built with Go 1.24). Catches unused vars, error handling issues,
-  security issues via `gosec`.
+- [x] **Re-enable `golangci-lint`** — enabled in CI (`golangci-lint-action@v7`,
+  v2.12.2).
 - [ ] **Test coverage reporting** — add `-coverprofile=coverage.out` and either
   upload to Codecov or print the summary. Gives visibility on coverage trends.
 - [ ] **Branch protection rule** — configure required status checks on `main`
@@ -27,8 +26,7 @@ shipped in the initial version.
 - [x] ~~**Unpin fulfillment-service in integration test**~~ — root cause found:
   migration 69 calls `uuidv7()` which requires PostgreSQL 18. Fixed by
   switching CI to `postgres:18`. See `docs/dev/troubleshooting.md`.
-- [ ] **`govulncheck`** — add `golang/govulncheck-action@v1` to scan
-  dependencies for known CVEs. Free and fast.
+- [x] **`govulncheck`** — running in CI.
 - [ ] **Test result reporting** — switch to `gotestsum --junitfile results.xml`
   and upload as a GitHub Actions artifact for better failure diagnosis.
 - [ ] **Integration test job** — ~~run `snippets/test-inventory-watcher.sh`

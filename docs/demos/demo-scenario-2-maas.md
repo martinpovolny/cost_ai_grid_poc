@@ -74,7 +74,7 @@ watch -n 2 'docker exec cost-db psql -U user -d costdb -c \
    GROUP BY meter_name, unit ORDER BY meter_name;"'
 ```
 
-Shows 4 meter types accumulating: `maas_tokens_in`, `maas_tokens_out`,
+Shows 3 meter types accumulating: `maas_tokens_in`, `maas_tokens_out`,
 `maas_requests`.
 
 ### Act 5: Per-tenant breakdown
