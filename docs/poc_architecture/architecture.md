@@ -52,7 +52,7 @@ flowchart TB
     end
 
     ai_grid -->|"provisions / manages"| osac_sys
-    osac_api -->|"Watch stream\n(NDJSON)"| watcher
+    osac_api -->|"Watch stream\n(gRPC)"| watcher
     osac_api -->|"List endpoints\n(reconciler)"| watcher
     koku_api -.->|"quota alerts\n(TBD transport)"| osac_api
 ```
@@ -80,7 +80,7 @@ When running the full stack locally, services are assigned ports to avoid confli
 | Env var | Default | Purpose |
 |---|---|---|
 | `OSAC_BASE_URL` | `http://localhost:8011` | REST gateway |
-| `OSAC_GRPC_ADDRESS` | (empty) | gRPC address (if set, uses gRPC instead of REST NDJSON) |
+| `OSAC_GRPC_ADDRESS` | `localhost:8010` | gRPC address for the public Watch stream (default transport) |
 | `OSAC_TOKEN` | (optional) | Bearer JWT |
 | `OSAC_CA_CERT` | (optional) | Custom TLS root |
 | `INVENTORY_DB_URL` | `postgres://user:pass@localhost:5434/costdb` | POC DB |
@@ -146,14 +146,14 @@ The OSAC fulfillment service exposes a gRPC streaming `Events` service (with a R
 
 ## Watch Stream
 
-The underlying transport is `osac.public.v1.Events` (gRPC streaming watch). The PoC consumes it via the REST gateway NDJSON endpoint using the Go `inventory-watcher` service, with a periodic reconciler against List endpoints.
+The underlying transport is `osac.public.v1.Events` (gRPC streaming watch). The default build uses the gRPC client directly against `OSAC_GRPC_ADDRESS`; a REST NDJSON fallback is available via `-tags rest_watch`. Per OSAC team guidance (Avishay, Jul 12), the public gRPC API is the recommended transport.
 
 ```mermaid
 flowchart LR
     osac["OSAC REST gateway\nlocalhost:8011"]
     consumer["inventory-watcher\n(Go)"]
     db["POC PostgreSQL\n:5434"]
-    osac -->|"GET /api/private/v1/events/watch\n(NDJSON stream)"| consumer
+    osac -->|"gRPC Watch stream\n(osac.public.v1.Events)"| consumer
     osac -->|"GET /projects, /compute_instances,\n/clusters, /instance_types\n(reconciler)"| consumer
     consumer --> db
 ```
@@ -232,7 +232,7 @@ Goroutines run concurrently via `errgroup` in `cmd/consumer/main.go`:
 
 | Worker | On startup | Interval | Role |
 |---|---|---|---|
-| **Watcher** | Connect immediately | Continuous stream | NDJSON events → raw log + inventory upsert |
+| **Watcher** | Connect immediately | Continuous stream | gRPC Watch events → raw log + inventory upsert |
 | **Reconciler** | Full sync immediately | `RECONCILE_INTERVAL` (default 1h) | List API diff for missed events |
 | **Meter** | Waits for first tick | `METERING_INTERVAL` (default 60s) | Capacity meters for billable VMs, clusters, bare metal |
 | **Rater** | Waits for first tick | `RATING_INTERVAL` (default 30s) | Processes unrated `metering_entries` → `cost_entries` using `rates` table; evaluates quota thresholds |

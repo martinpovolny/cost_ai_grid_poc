@@ -1,4 +1,4 @@
-//go:build !grpc_watch
+//go:build rest_watch
 
 package osac
 
