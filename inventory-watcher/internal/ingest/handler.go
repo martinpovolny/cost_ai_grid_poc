@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/osac-project/cost-event-consumer/internal/billing"
 	"github.com/osac-project/cost-event-consumer/internal/config"
 	"github.com/osac-project/cost-event-consumer/internal/custommetrics"
 	"github.com/osac-project/cost-event-consumer/internal/inventory"
@@ -494,9 +495,6 @@ func (h *Handler) handleQuotaStatus(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	now := time.Now().UTC()
-	periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	periodEnd := periodStart.AddDate(0, 1, 0)
-	periodLabel := now.Format("2006-01")
 
 	quotas, err := h.store.QuotasForTenant(ctx, tenantID, now)
 	if err != nil {
@@ -506,7 +504,22 @@ func (h *Handler) handleQuotaStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var statuses []inventory.QuotaStatus
+	var firstPeriodLabel string
 	for _, q := range quotas {
+		qPeriod := q.Period
+		if qPeriod == "" {
+			qPeriod = "monthly"
+		}
+		periodStart, periodEnd, err := billing.ResolvePeriod(qPeriod, now)
+		if err != nil {
+			h.logger.Warn("invalid quota period", "tenant", tenantID, "meter", q.MeterName, "period", qPeriod, "error", err)
+			continue
+		}
+		periodLabel := billing.PeriodLabel(qPeriod, now)
+		if firstPeriodLabel == "" {
+			firstPeriodLabel = periodLabel
+		}
+
 		consumed, err := h.store.MeteringSum(ctx, tenantID, q.MeterName, periodStart, periodEnd)
 		if err != nil {
 			h.logger.Error("failed to sum metering", "tenant", tenantID, "meter", q.MeterName, "error", err)
@@ -536,9 +549,13 @@ func (h *Handler) handleQuotaStatus(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	if firstPeriodLabel == "" {
+		firstPeriodLabel = billing.PeriodLabel("monthly", now)
+	}
+
 	resp := quotaStatusResponse{
 		TenantID: tenantID,
-		Period:   periodLabel,
+		Period:   firstPeriodLabel,
 		Quotas:   statuses,
 	}
 
@@ -854,8 +871,6 @@ func (h *Handler) handleBalanceCheck(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	now := time.Now().UTC()
-	periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	periodEnd := periodStart.AddDate(0, 1, 0)
 
 	quotas, err := h.store.QuotasForTenant(ctx, customerID, now)
 	if err != nil || len(quotas) == 0 {
@@ -866,6 +881,14 @@ func (h *Handler) handleBalanceCheck(w http.ResponseWriter, r *http.Request) {
 	totalLimit := 0.0
 	totalUsage := 0.0
 	for _, q := range quotas {
+		qPeriod := q.Period
+		if qPeriod == "" {
+			qPeriod = "monthly"
+		}
+		periodStart, periodEnd, err := billing.ResolvePeriod(qPeriod, now)
+		if err != nil {
+			continue
+		}
 		consumed, err := h.store.MeteringSum(ctx, customerID, q.MeterName, periodStart, periodEnd)
 		if err != nil {
 			continue

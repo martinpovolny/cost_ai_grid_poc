@@ -311,6 +311,10 @@ CREATE INDEX IF NOT EXISTS idx_raw_events_event_id ON raw_events (event_id);
 ALTER TABLE metering_entries ADD COLUMN IF NOT EXISTS rated_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_me_unrated ON metering_entries (id) WHERE rated_at IS NULL;
 
+-- tier_mode and tier_period on rates for cumulative/windowed tier pricing (REQ-11)
+ALTER TABLE rates ADD COLUMN IF NOT EXISTS tier_mode TEXT NOT NULL DEFAULT 'per_event';
+ALTER TABLE rates ADD COLUMN IF NOT EXISTS tier_period TEXT NOT NULL DEFAULT '';
+
 CREATE TABLE IF NOT EXISTS splunk_cursor (
     id             INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
     last_sent_id   BIGINT NOT NULL DEFAULT 0,
@@ -974,12 +978,12 @@ func (s *Store) UpsertRate(ctx context.Context, rec RateRecord) (int64, error) {
 	var id int64
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO rates
-			(tenant_id, resource_type, instance_type, meter_name, koku_metric, cost_type, price_per_unit, currency, tiers, description, effective_from, effective_to)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			(tenant_id, resource_type, instance_type, meter_name, koku_metric, cost_type, price_per_unit, currency, tiers, tier_mode, tier_period, description, effective_from, effective_to)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT DO NOTHING
 		RETURNING id
 	`, rec.TenantID, rec.ResourceType, rec.InstanceType, rec.MeterName, rec.KokuMetric, rec.CostType,
-		rec.PricePerUnit, rec.Currency, tiersJSON, rec.Description,
+		rec.PricePerUnit, rec.Currency, tiersJSON, rec.TierMode, rec.TierPeriod, rec.Description,
 		rec.EffectiveFrom, rec.EffectiveTo).Scan(&id)
 
 	if err != nil {
@@ -998,7 +1002,7 @@ func (s *Store) FindRate(ctx context.Context, tenantID, resourceType, instanceTy
 
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, tenant_id, resource_type, instance_type, meter_name, koku_metric, cost_type,
-		       price_per_unit, currency, tiers, description, effective_from, effective_to
+		       price_per_unit, currency, tiers, tier_mode, tier_period, description, effective_from, effective_to
 		FROM rates
 		WHERE resource_type = $1 AND meter_name = $2
 		  AND effective_from <= $3
@@ -1011,7 +1015,7 @@ func (s *Store) FindRate(ctx context.Context, tenantID, resourceType, instanceTy
 	`, resourceType, meterName, at, tenantID, instanceType).Scan(
 		&rec.ID, &rec.TenantID, &rec.ResourceType, &rec.InstanceType, &rec.MeterName,
 		&rec.KokuMetric, &rec.CostType,
-		&rec.PricePerUnit, &rec.Currency, &tiersJSON, &rec.Description,
+		&rec.PricePerUnit, &rec.Currency, &tiersJSON, &rec.TierMode, &rec.TierPeriod, &rec.Description,
 		&rec.EffectiveFrom, &rec.EffectiveTo)
 
 	if err != nil {
@@ -1069,7 +1073,7 @@ func (s *Store) MarkMeteringEntriesRated(ctx context.Context, ids []int64) error
 func (s *Store) AllActiveRates(ctx context.Context, at time.Time) ([]RateRecord, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, tenant_id, resource_type, instance_type, meter_name, koku_metric, cost_type,
-		       price_per_unit, currency, tiers, description, effective_from, effective_to
+		       price_per_unit, currency, tiers, tier_mode, tier_period, description, effective_from, effective_to
 		FROM rates
 		WHERE effective_from <= $1
 		  AND (effective_to IS NULL OR effective_to > $1)
@@ -1086,7 +1090,7 @@ func (s *Store) AllActiveRates(ctx context.Context, at time.Time) ([]RateRecord,
 		var tiersJSON []byte
 		if err := rows.Scan(&r.ID, &r.TenantID, &r.ResourceType, &r.InstanceType, &r.MeterName,
 			&r.KokuMetric, &r.CostType, &r.PricePerUnit, &r.Currency, &tiersJSON,
-			&r.Description, &r.EffectiveFrom, &r.EffectiveTo); err != nil {
+			&r.TierMode, &r.TierPeriod, &r.Description, &r.EffectiveFrom, &r.EffectiveTo); err != nil {
 			return nil, err
 		}
 		if tiersJSON != nil {

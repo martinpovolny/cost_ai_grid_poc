@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/osac-project/cost-event-consumer/internal/billing"
 	"github.com/osac-project/cost-event-consumer/internal/inventory"
 	"github.com/osac-project/cost-event-consumer/internal/metrics"
 )
@@ -67,6 +68,9 @@ func (r *Rater) sweep(ctx context.Context) {
 	skipped := 0
 	skippedMeters := make(map[string]bool)
 
+	type accumKey struct{ tenant, meter, period string }
+	priorUsageCache := make(map[accumKey]float64)
+
 	for _, me := range entries {
 		rate := matchRate(rateIndex, me.TenantID, me.InstanceType, me.ResourceType, me.MeterName)
 		if rate == nil {
@@ -79,7 +83,29 @@ func (r *Rater) sweep(ctx context.Context) {
 			continue
 		}
 
-		cost := ApplyRate(me.Value, *rate)
+		var cost float64
+		if len(rate.Tiers) > 0 && rate.TierMode == "cumulative" {
+			period := rate.TierPeriod
+			if period == "" {
+				period = "monthly"
+			}
+			periodStart, periodEnd, err := billing.ResolvePeriod(period, me.PeriodEnd)
+			if err != nil {
+				r.logger.Warn("invalid tier_period", "period", period, "error", err)
+				cost = ApplyRate(me.Value, *rate)
+			} else {
+				ak := accumKey{me.TenantID, me.MeterName, billing.PeriodLabel(period, me.PeriodEnd)}
+				prior, cached := priorUsageCache[ak]
+				if !cached {
+					prior, _ = r.store.MeteringSum(ctx, me.TenantID, me.MeterName, periodStart, periodEnd)
+					priorUsageCache[ak] = prior
+				}
+				cost = ApplyRateCumulative(me.Value, prior, *rate)
+				priorUsageCache[ak] = prior + me.Value
+			}
+		} else {
+			cost = ApplyRate(me.Value, *rate)
+		}
 		costEntries = append(costEntries, inventory.CostEntry{
 			MeteringEntryID: me.ID,
 			RateID:          rate.ID,
@@ -175,9 +201,6 @@ var ThresholdLevels = []float64{50, 70, 90, 100}
 
 func (r *Rater) evaluateThresholds(ctx context.Context) {
 	now := time.Now().UTC()
-	period := now.Format("2006-01")
-	periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	periodEnd := periodStart.AddDate(0, 1, 0)
 
 	tenants, err := r.store.AllTenantsWithQuotas(ctx, now)
 	if err != nil {
@@ -193,6 +216,17 @@ func (r *Rater) evaluateThresholds(ctx context.Context) {
 		}
 
 		for _, q := range quotas {
+			qPeriod := q.Period
+			if qPeriod == "" {
+				qPeriod = "monthly"
+			}
+			periodStart, periodEnd, err := billing.ResolvePeriod(qPeriod, now)
+			if err != nil {
+				r.logger.Warn("invalid quota period", "tenant", tenantID, "meter", q.MeterName, "period", qPeriod, "error", err)
+				continue
+			}
+			period := billing.PeriodLabel(qPeriod, now)
+
 			consumed, err := r.store.MeteringSum(ctx, tenantID, q.MeterName, periodStart, periodEnd)
 			if err != nil || consumed == 0 || q.LimitValue <= 0 {
 				continue
@@ -266,6 +300,23 @@ func applyTieredRate(value float64, tiers []inventory.Tier) float64 {
 	}
 
 	return cost
+}
+
+// ApplyRateCumulative computes cost for a metered value given prior
+// cumulative usage in the billing period. The waterfall starts at
+// priorUsage instead of 0 — only the marginal delta is priced.
+func ApplyRateCumulative(value, priorUsage float64, rate inventory.RateRecord) float64 {
+	if len(rate.Tiers) == 0 {
+		return value * rate.PricePerUnit
+	}
+	return applyTieredRateCumulative(value, priorUsage, rate.Tiers)
+}
+
+func applyTieredRateCumulative(value, priorUsage float64, tiers []inventory.Tier) float64 {
+	totalUsage := priorUsage + value
+	costTotal := applyTieredRate(totalUsage, tiers)
+	costPrior := applyTieredRate(priorUsage, tiers)
+	return costTotal - costPrior
 }
 
 // SeedDefaultRates populates the rates table with sensible defaults if empty.
