@@ -384,3 +384,4 @@ Blocked on OSAC MaaS CloudEvent schema.
 - [ADR-002: Watch stream instead of Kafka](../decisions/002-arguments-against-kafka.md)
 - [boundary_monitoring/alerting-osac-integration.md](boundary_monitoring/alerting-osac-integration.md) — quota integration options & ownership (REQ-9, REQ-10)
 - [boundary_monitoring/alerting-spec-draft.md](boundary_monitoring/alerting-spec-draft.md) — API/schema draft (after route chosen)
+- [boundary_monitoring/wallet-spec-draft.md](boundary_monitoring/wallet-spec-draft.md) — prepaid wallets ledger, deduction, status API (REQ-14)

@@ -358,6 +358,7 @@ Wallets therefore need an explicit prepaid-balance concept (this requirement), e
 - REQ-9 (Quota/Budget Status API) — complementary monetary controls
 - REQ-10 (Threshold Notification Back Channel) — low-balance alerts
 - [COST-7938](https://redhat.atlassian.net/browse/COST-7938) — Cost Management feature
+- [Wallet spec draft](../poc_architecture/boundary_monitoring/wallet-spec-draft.md) — ledger, deduction, status API
 
 **Scope:**
 - IN: Wallet ledger (balance, top-up, deduction from metered spend); status API for remaining balance / threshold flags
