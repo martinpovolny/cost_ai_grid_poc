@@ -9,6 +9,12 @@
 > **Depends on:** REQ-9 (Quota status API) — **Done**
 >
 > **Cody's design:** [boundary_monitoring/](https://github.com/myersCody/cost_ai_grid_poc/tree/main/docs/poc_architecture/boundary_monitoring)
+>
+> **Implementation progress:** Pull model is Done — quota API returns
+> `thresholds` flags at 50/70/90/100%. Threshold evaluation is wired
+> into the rating sweep (`evaluateThresholds` runs after each rating
+> cycle, fires alerts to the `alerts` table). Push/webhook model is
+> parked per Jul 2, 2026 decision — OSAC has no receiver.
 
 ## What We Have
 
@@ -85,7 +91,7 @@ In the rating sweep (every 30s), after processing metering entries:
 
 1. For each tenant with active quotas
 2. Compute current consumption percentage
-3. Check each threshold level (50, 70, 90, 100)
+3. Check each threshold level (50, 70, 90, 100). Ideally, thresholds should be configurable by OSAC Cloud/Tenant Admin roles and/or Cost Management Administrators (depending on which one is the source of truth for the thresholds). It should be possible to configure thresholds for different tenants and meters separately.
 4. If crossed and not already in `alerts` → insert alert + deliver
 
 ### 3. Webhook Delivery

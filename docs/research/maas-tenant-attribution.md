@@ -222,24 +222,20 @@ the tenant is: split on `/`, take the first segment, strip the
 
 ## Current State in Our Code
 
-Source: [handler.go — classifyEvent](../../inventory-watcher/internal/ingest/handler.go)
-
-Currently:
-```go
-case EventTypeInferenceTokens:
-    rid := peek.ModelID
-    if rid == "" {
-        rid = peek.Model
-    }
-    return "Model", rid, tenantID
-```
-
-Where `tenantID` falls back to `ce.Subject` (the username). This means
-**costs are attributed to the individual user, not the OSAC tenant.**
-
-For a single-user-per-tenant setup this works, but in multi-user tenants
-(multiple users under `tenant-acme`), costs would be scattered across
-user IDs instead of aggregated under the tenant.
+> **Updated (Jul 18, 2026):** The section below described the pre-PR#39
+> state. Tenant attribution is now implemented with a 4-level fallback
+> in `handleModelEvent` (`handler.go`):
+>
+> 1. `organization_id` from CloudEvent data (preferred)
+> 2. `ai-tenant-` prefix stripped from subscription namespace
+> 3. `group` field
+> 4. `user` field (last resort)
+>
+> This was verified end-to-end in
+> [tenant attribution experiment](../dev/tenant-attribution-experiment-2026-07-08.md)
+> and merged in PRs #39, #47. `user` is now stored separately as
+> `user_id` on metering/cost entries for per-user cost attribution
+> (PR #59).
 
 ## Balance Check — Same Identity Gap
 

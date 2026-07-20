@@ -71,6 +71,7 @@ HTTP ingest endpoint ──► MaaS / custom events ──►   quota status API
 | [ADR-001](decisions/001-metering-sweep-interval.md) | 60-second metering sweep |
 | [ADR-002](decisions/002-arguments-against-kafka.md) | No Kafka — gRPC Watch + List reconciliation |
 | [ADR-003](decisions/003-heartbeat-emitter-vs-sweep.md) | Local sweep replaces heartbeat collector |
+| [ADR-004](decisions/004-raw-events-no-unique-index.md) | Drop unique index on raw_events for throughput |
 
 ## Research
 
@@ -91,6 +92,7 @@ HTTP ingest endpoint ──► MaaS / custom events ──►   quota status API
 | [Adversarial review v1](reviews/adversarial-review-v1.md) | Full codebase — 17 findings |
 | [Adversarial review v2](reviews/adversarial-review-v2.md) | Observability PR — 33 total |
 | [Adversarial review v3](reviews/adversarial-review-v3.md) | Custom metrics PR — 41 total, 22 fixed |
+| [Adversarial review v4](reviews/adversarial-review-v4.md) | Full re-audit — 72 total |
 
 ## Demos
 
@@ -99,7 +101,7 @@ HTTP ingest endpoint ──► MaaS / custom events ──►   quota status API
 | [Demo 1: Full Pipeline](demos/demo-scenario-1.md) | Events → inventory → metering → cost → quotas → MaaS (11 acts) |
 | [Demo 2: MaaS deep dive](demos/demo-scenario-2-maas.md) | Per-tenant and per-model cost drill-down, simulator options, throughput (extends demo 1 Act 11) |
 | [Demo 3: Dashboard](demos/demo-scenario-3-dashboard.md) | Live dashboard, CSV export, per-tenant pricing |
-| [Demo 4: WIP](demos/demo4/) | Observability, custom metrics, CI, CRC (in progress) |
+| [Demo 4](demos/demo4/) | Observability, custom metrics, CI, CRC |
 
 ## Code Map
 
@@ -159,7 +161,8 @@ snippets/
 | `METRICS_PORT` | `9000` | Prometheus metrics (separate port, no auth) |
 | `CUSTOM_METRICS_CONFIG` | — | Path to custom metrics JSON config (REQ-13) |
 | `RECONCILE_INTERVAL` | `1h` | How often to reconcile against OSAC |
-| `SUMMARIZE_INTERVAL` | `1h` | Daily summary interval |
+| `METERING_INTERVAL` | `60s` | Metering sweep interval |
+| `RATING_INTERVAL` | `30s` | Rating sweep interval |
 | `LOG_LEVEL` | `info` | Log verbosity: debug, info, warn, error |
 | `LOG_FORMAT` | `text` | Log format: `text` or `json` |
 | `AUTH_ISSUER_URL` | — | OIDC issuer URL. Auth disabled if empty |

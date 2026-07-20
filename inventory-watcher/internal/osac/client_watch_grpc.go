@@ -1,4 +1,4 @@
-//go:build grpc_watch
+//go:build !rest_watch
 
 package osac
 
@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/golang/protobuf/jsonpb"
-	"github.com/jhump/protoreflect/dynamic"
+	"github.com/golang/protobuf/jsonpb"              //nolint:staticcheck // v2 migration (protojson+dynamicpb) tracked separately
+	"github.com/jhump/protoreflect/dynamic"           //nolint:staticcheck // v2 migration tracked separately
 	"github.com/jhump/protoreflect/dynamic/grpcdynamic"
 	"github.com/jhump/protoreflect/grpcreflect"
 	"google.golang.org/grpc"
@@ -38,7 +38,7 @@ func (c *Client) WatchEvents(ctx context.Context, handler func(Event) error) err
 	if err != nil {
 		return fmt.Errorf("grpc dial %s: %w", addr, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if c.Token() != "" {
 		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+c.Token())

@@ -15,6 +15,7 @@
 2. **Standalone bare metal** — Do we need to support bare metal nodes
    outside of an OpenShift cluster? The proto supports it but the
    requirement is unclear.
+   Answer: YES. RHEL bare metal, Windows bare metal, etc are a reality.
 
 3. **BareMetalInstance in public Watch stream** — Currently only in the
    private event stream (field 27). Any plans to add it to the public
@@ -97,10 +98,11 @@
     `tokens_in` and `tokens_out`. Should we match the 4-dimension model,
     or map prompt→in, completion→out and add cached+reasoning as separate
     meters? Pricing may differ per dimension (e.g., cached tokens cheaper).
+    > **Update (Jul 18, 2026):** Decision made — only `maas_tokens_in`, `maas_tokens_out`, and `maas_requests` are metered. `cached_input_tokens` and `reasoning_tokens` are subsets of input/output tokens (per OpenAI API spec); billing them separately would double-count. They are parsed from CloudEvents for observability but do not produce metering entries.
 
 ## Threshold Notifications (REQ-10)
 
-10. **Quota alert mechanism shelved** — Per "Cost Management + OSAC"
+11. **Quota alert mechanism shelved** — Per "Cost Management + OSAC"
     meeting, 2026-07-02: "quota alert mechanism — deferred until after
     the PoC." Pull-based threshold checks (quota API + IPP balance check)
     are the agreed approach for now. Push webhooks not needed for PoC.
@@ -182,12 +184,13 @@
     > feasible for Jul 31 or Aug 31; if not, action item is to track it
     > as future work.
 
-17. ~~**Quota scope**~~ — **Resolved.** Quotas/budgets scoped per tenant
-    AND per project. Projects roll up to tenant (sum of project
-    consumptions cannot exceed tenant quota). Overcommitting at project
-    level is allowed. Currently we only have tenant-level quotas;
-    project-level quotas with rollup is new work.
-    *Source: PR #33 (Pau Garcia Quiles), REQ-3a acceptance criteria.*
+17. ~~**Quota scope**~~ — **Resolved (updated Jul 20, 2026).** Quotas/budgets
+    scoped per tenant AND per project. Projects roll up to tenant (sum of
+    project consumptions cannot exceed tenant quota). **Sum of project-level
+    limits must not exceed the tenant-level limit** (no overcommit of limits).
+    Currently we only have tenant-level quotas; project-level quotas with
+    rollup is new work. See [req9-quota-budget-gap-analysis.md](req9-quota-budget-gap-analysis.md).
+    *Source: PR #33 (Pau Garcia Quiles), REQ-3a/REQ-9; overcommit rule clarified Jul 20.*
 
 18. **RBAC model** — Pau clarified (PR #33): "Using Insights RBAC is
     NOT mandatory. We may want to move to a simpler model, e.g. per
@@ -251,3 +254,4 @@
     purely from instance type and doesn't break when CPU/memory fields
     disappear. Martin asked Moti for a pointer to the relevant PR/
     discussion to track this.
+    > **Update (Jul 18, 2026):** Catalog fallback implemented in the metering sweep (PR #59) — when `cores == 0`, specs resolved from InstanceType catalog. Per-SKU pricing via `instance_type` rate dimension also implemented. See [req3b gap analysis](req3b-instance-type-only-gap-analysis.md).

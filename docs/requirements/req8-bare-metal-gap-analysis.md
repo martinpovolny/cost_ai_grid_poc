@@ -5,6 +5,43 @@
 >
 > **Source:** [poc_requirements_overview.md#req-8](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-8-bare-metal-costing-osac-bare-metal-service)
 
+## Implementation Progress (updated Jul 19, 2026)
+
+> Bare metal costing is **substantially implemented** — all items from
+> the "What We Need to Implement" table below are Done except
+> `bm_cpu_core_seconds` and `bm_memory_gib_seconds` (blocked on
+> catalog-item hardware spec resolution). REQ-8 is parked from the
+> Jul 31 demo scope per the Jul 2 decision, independent of our
+> implementation status.
+
+| Component | Status | Implementation |
+|-----------|--------|----------------|
+| Go types | **Done** | `BareMetalInstance` in `internal/osac/types.go` |
+| Inventory table | **Done** | `inventory_bare_metal_instance` in `store.go` |
+| Model | **Done** | `BareMetalInstanceRecord` in `models.go` |
+| Watch handler | **Done** | `event.BareMetalInstance` case in `watcher.go` |
+| Reconciler | **Done** | `ListBareMetalInstances()` in `reconciler.go` |
+| OSAC client | **Done** | `ListBareMetalInstances()` in `client.go` |
+| Billable states | **Done** | `BARE_METAL_INSTANCE_STATE_RUNNING` in `billable.go` |
+| Metering sweep | **Done** | `meterBareMetalInstances` + `MeterBareMetalInstanceFinal` in `metering.go` |
+| Default rates | **Done** | `bm_uptime_seconds` seeded in `rating.go` |
+| Meters: `bm_uptime_seconds` | **Done** | Duration-only meter |
+| Meters: `bm_cpu_core_seconds` | **Gap** | BM instance has no `cores` — needs catalog-item → template resolution |
+| Meters: `bm_memory_gib_seconds` | **Gap** | Same — no `memory_gib` on BM instance |
+
+### Blockers (updated)
+
+| Blocker | Original status | Current status |
+|---------|----------------|----------------|
+| BareMetalInstance not in Watch stream | Blocked | **Resolved** — watcher handles `event.BareMetalInstance` |
+| No BMaaS metering collector | Blocked | **Resolved** — local 60s sweep, same as VMs |
+| No BMaaS CloudEvent schema | Blocked | **Resolved** — ingest handler accepts bare metal events |
+| Hardware specs on catalog_item only | Blocked | **Still a gap** — same pattern as REQ-3b catalog fallback, but BM instance has no inline `cores`/`memory_gib` fields at all |
+
+---
+
+## Original Analysis (written before implementation)
+
 ## OSAC State
 
 ### What exists

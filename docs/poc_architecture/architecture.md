@@ -52,7 +52,7 @@ flowchart TB
     end
 
     ai_grid -->|"provisions / manages"| osac_sys
-    osac_api -->|"Watch stream\n(NDJSON)"| watcher
+    osac_api -->|"Watch stream\n(gRPC)"| watcher
     osac_api -->|"List endpoints\n(reconciler)"| watcher
     koku_api -.->|"quota alerts\n(TBD transport)"| osac_api
 ```
@@ -72,7 +72,7 @@ When running the full stack locally, services are assigned ports to avoid confli
 | OSAC PostgreSQL | 5433 | |
 | **inventory-watcher** | — | **Implemented** — Go binary (`inventory-watcher/cmd/consumer`); no dedicated listen port (HTTP ingest optional on `INGEST_LISTEN_ADDR`). Six concurrent workers — see [inventory-watcher Workers](#inventory-watcher-workers). Persists to POC PostgreSQL `:5434`. Auth: `OSAC_TOKEN` Bearer JWT against `:8011`. Go module logs as `cost-event-consumer`; built artifact is typically named `inventory-watcher`. |
 | **POC PostgreSQL** | **5434** | Cost inventory DB (`costdb`); schema auto-migrated by inventory-watcher on startup |
-| **POC HTTP Ingest** | **8020** | **Implemented** (optional) — `POST /api/v1/events` (CloudEvent receiver), `GET /api/v1/quotas/{tenant_id}` (quota status), `GET /api/v1/health`; activated when `INGEST_LISTEN_ADDR=:8020` |
+| **POC HTTP Ingest** | **8020** | **Implemented** (optional) — `POST /api/v1/events`, `GET /api/v1/quotas/{tenant_id}`, `GET /api/v1/reports/costs`, `GET /api/v1/reports/breakdown`, `GET /healthz`, `GET /readyz`; activated when `INGEST_LISTEN_ADDR=:8020` |
 | POC Kafka | 9092 | Optional — only needed for Option C |
 
 ### inventory-watcher configuration
@@ -80,15 +80,20 @@ When running the full stack locally, services are assigned ports to avoid confli
 | Env var | Default | Purpose |
 |---|---|---|
 | `OSAC_BASE_URL` | `http://localhost:8011` | REST gateway |
+| `OSAC_GRPC_ADDRESS` | `localhost:8010` | gRPC address for the public Watch stream (default transport) |
 | `OSAC_TOKEN` | (optional) | Bearer JWT |
 | `OSAC_CA_CERT` | (optional) | Custom TLS root |
 | `INVENTORY_DB_URL` | `postgres://user:pass@localhost:5434/costdb` | POC DB |
 | `RECONCILE_INTERVAL` | `1h` | Reconciler ticker |
-| `SUMMARIZE_INTERVAL` | `1h` | Summarizer ticker |
-| `LOG_LEVEL` | `debug` | Log verbosity (`debug`, `info`, `warn`, `error`) |
-| `INGEST_LISTEN_ADDR` | (empty — disabled) | Activate HTTP ingest server on this address (e.g. `localhost:8020` or `:8020`) |
-
-Meter sweep interval is **60s**, hardcoded in `cmd/consumer/main.go` (not env-configurable).
+| `METERING_INTERVAL` | `60s` | Metering sweep ticker |
+| `RATING_INTERVAL` | `30s` | Rating sweep ticker |
+| `LOG_LEVEL` | `info` | Log verbosity (`debug`, `info`, `warn`, `error`) |
+| `LOG_FORMAT` | `text` | Log format (`text` or `json`) |
+| `INGEST_LISTEN_ADDR` | (empty — disabled) | HTTP ingest server address (e.g. `:8020`) |
+| `METRICS_PORT` | `9000` | Prometheus metrics (separate port, no auth) |
+| `CUSTOM_METRICS_CONFIG` | (empty) | Path to custom metrics JSON config (REQ-13) |
+| `AUTH_ISSUER_URL` | (empty) | OIDC issuer URL; auth disabled if empty |
+| `SPLUNK_HEC_URL` | (empty) | Splunk HEC endpoint; forwarding disabled if empty |
 
 ---
 
@@ -116,8 +121,8 @@ The hierarchy above is the full OSAC model. **inventory-watcher** tracks only a 
 | Cluster (CaaS) | Yes | Yes |
 | Project | Yes (reconcile + events) | N/A |
 | InstanceType | Yes (lookup catalog) | N/A |
-| Model (MaaS) | **Partial** — `inventory_model` table populated via HTTP ingest CloudEvents (`osac.model.lifecycle`) | **Partial** — `maas_tokens_in`, `maas_tokens_out`, `maas_requests` emitted via `MeterMaaSEvent` on ingest; OSAC schema TBD |
-| BareMetal (BMaaS) | No | No |
+| Model (MaaS) | **Partial** — `inventory_model` table populated via HTTP ingest CloudEvents (`osac.model.lifecycle`, `inference.tokens.used`) | **Partial** — `maas_tokens_in`, `maas_tokens_out`, `maas_requests` emitted via `MeterMaaSEvent` on ingest; OSAC schema TBD |
+| BareMetal (BMaaS) | Yes — `inventory_bare_metal_instance` via reconciler + Watch | Yes — `bm_uptime_seconds` via metering sweep |
 
 MaaS inventory and consumption metering are operational via the HTTP ingest path when `INGEST_LISTEN_ADDR` is set and `osac.model.lifecycle` CloudEvents are posted to `POST /api/v1/events`. The `maas-simulator` tool can generate test events. BMaaS remains blocked on OSAC schema.
 
@@ -141,14 +146,14 @@ The OSAC fulfillment service exposes a gRPC streaming `Events` service (with a R
 
 ## Watch Stream
 
-The underlying transport is `osac.public.v1.Events` (gRPC streaming watch). The PoC consumes it via the REST gateway NDJSON endpoint using the Go `inventory-watcher` service, with a periodic reconciler against List endpoints.
+The underlying transport is `osac.public.v1.Events` (gRPC streaming watch). The default build uses the gRPC client directly against `OSAC_GRPC_ADDRESS`; a REST NDJSON fallback is available via `-tags rest_watch`. Per OSAC team guidance (Avishay, Jul 12), the public gRPC API is the recommended transport.
 
 ```mermaid
 flowchart LR
     osac["OSAC REST gateway\nlocalhost:8011"]
     consumer["inventory-watcher\n(Go)"]
     db["POC PostgreSQL\n:5434"]
-    osac -->|"GET /api/private/v1/events/watch\n(NDJSON stream)"| consumer
+    osac -->|"gRPC Watch stream\n(osac.public.v1.Events)"| consumer
     osac -->|"GET /projects, /compute_instances,\n/clusters, /instance_types\n(reconciler)"| consumer
     consumer --> db
 ```
@@ -202,35 +207,37 @@ Schema is auto-migrated on inventory-watcher startup (inline SQL in `inventory-w
 
 | Table | Role |
 |---|---|
-| `raw_events` | Immutable event log; dedup on `event_id` |
+| `raw_events` | Immutable event log; no unique constraint on `event_id` (throughput optimization — see [ADR-004](../decisions/004-raw-events-no-unique-index.md)) |
+| `inventory_tenant` | Tenant inventory; upserted from Watch + reconciler |
 | `inventory_project` | Project inventory |
 | `inventory_compute_instance` | VM inventory; `last_metered_at` sweep cursor |
 | `inventory_cluster` | Cluster inventory; `node_sets` JSONB |
 | `inventory_instance_type` | Spec catalog for rate/summary lookup |
 | `inventory_model` | Model (MaaS) inventory; populated via HTTP ingest CloudEvents |
+| `inventory_bare_metal_instance` | Bare metal inventory; populated via reconciler + Watch |
+| `inventory_catalog_item` | Catalog items (cluster, compute_instance, bare_metal) synced from OSAC |
 | `metering_entries` | Per-sweep / per-event meter increments |
-| `rates` | Rate records; seeded on startup; supports flat and tiered pricing |
-| `rate_tiers` | Tier bands for tiered rate evaluation (schema defined, flat rates used for PoC) |
+| `rates` | Rate records; seeded on startup; supports flat and tiered pricing (`tiers` JSONB column); `instance_type` dimension for per-SKU pricing |
 | `cost_entries` | Rated cost rows linked to `metering_entries` and `rates`; produced by the Rater worker |
 | `quotas` | Per-tenant quota limits; seeded on startup for demo tenants |
-| `daily_usage_summary` | Daily rollups (compute instances only) |
-
-**Tenant model:** there is no separate tenants table. `tenant` is a string column on inventory rows; `tenant_id` appears on `raw_events` and `metering_entries`. Tenant events are logged to `raw_events` only (no inventory table).
+| `alerts` | Threshold alerts (50/70/90/100%); fired by the Rater |
+| `splunk_cursor` | Splunk HEC forwarding cursor |
 
 ---
 
 ## inventory-watcher Workers
 
-Six goroutines run concurrently via `errgroup` in `cmd/consumer/main.go`:
+Goroutines run concurrently via `errgroup` in `cmd/consumer/main.go`:
 
 | Worker | On startup | Interval | Role |
 |---|---|---|---|
-| **Watcher** | Connect immediately | Continuous stream | NDJSON events → raw log + inventory upsert |
+| **Watcher** | Connect immediately | Continuous stream | gRPC Watch events → raw log + inventory upsert |
 | **Reconciler** | Full sync immediately | `RECONCILE_INTERVAL` (default 1h) | List API diff for missed events |
-| **Meter** | Waits for first tick | 60s (hardcoded) | Capacity meters for billable VMs and clusters |
-| **Summarizer** | Waits for first tick | `SUMMARIZE_INTERVAL` (default 1h) | `daily_usage_summary` for **previous UTC day**, compute instances only |
-| **Rater** | Waits for first tick | 30s (hardcoded) | Processes unrated `metering_entries` → `cost_entries` using `rates` table |
-| **HTTP Ingest** | Start immediately (optional) | Continuous | CloudEvent receiver (`POST /api/v1/events`), quota status API (`GET /api/v1/quotas/{tenant_id}`), health endpoint; only started when `INGEST_LISTEN_ADDR` is set |
+| **Meter** | Waits for first tick | `METERING_INTERVAL` (default 60s) | Capacity meters for billable VMs, clusters, bare metal |
+| **Rater** | Waits for first tick | `RATING_INTERVAL` (default 30s) | Processes unrated `metering_entries` → `cost_entries` using `rates` table; evaluates quota thresholds |
+| **Splunk** | Start if configured | `SPLUNK_INTERVAL` (default 10s) | Forwards `raw_events` to Splunk HEC for audit (opt-in via `SPLUNK_HEC_URL`) |
+| **HTTP Ingest** | Start immediately (optional) | Continuous | CloudEvent receiver, quota API, report API, balance check; only started when `INGEST_LISTEN_ADDR` is set |
+| **Metrics** | Start immediately | Continuous | Prometheus metrics on `METRICS_PORT` (default 9000) |
 
 ---
 
@@ -240,9 +247,9 @@ Six goroutines run concurrently via `errgroup` in `cmd/consumer/main.go`:
 
 Events use OSAC protobuf-style types (`EVENT_TYPE_OBJECT_CREATED`, etc.) parsed into Go structs — not full CloudEvents envelopes. Dedup field is `event_id` (not `ce_id`).
 
-**Inventory upsert (CREATE/UPDATE):** ComputeInstance, Cluster, InstanceType, Project
+**Inventory upsert (CREATE/UPDATE):** ComputeInstance, Cluster, InstanceType, Project, Tenant, BareMetalInstance, CatalogItem
 
-**Raw log only (no inventory table):** Tenant, HostType, ClusterTemplate, ComputeInstanceTemplate, Role, RoleBinding
+**Raw log only (no inventory table):** HostType, ClusterTemplate, ComputeInstanceTemplate, Role, RoleBinding
 
 **DELETE:**
 - ComputeInstance → final metering (if billable) + soft delete
@@ -265,7 +272,7 @@ OSAC REST API (reconciler)
   GET /instance_types     →  UPSERT inventory_instance_type
 ```
 
-**Not synced:** `cluster_templates`, `cluster_orders`, models, bare metal.
+**Not synced:** `cluster_templates`, `cluster_orders`.
 
 **Reconcile vs Watch gap:** clusters created via reconcile omit `node_sets` and `labels` (the watcher path populates them).
 
@@ -282,11 +289,11 @@ OSAC Watch event (or Reconciler upsert for missed CREATED)
   │
   └── [60s ticker] Meter sweep → INSERT metering_entries, UPDATE last_metered_at
         ↓
-      [30s ticker] Rater → FindRate → INSERT cost_entries (metering_entries → rates → cost_entries)
+      [30s ticker] Rater → matchRate (4-way fallback) → INSERT cost_entries
         ↓
-      [1h ticker] Summarizer → daily_usage_summary (yesterday UTC, VMs only)
+      Rater → evaluateThresholds → INSERT alerts (50/70/90/100%)
         ↓
-      [planned] quota check → threshold alerts → OSAC
+      [optional] Splunk HEC forwarder → raw_events → Splunk
 ```
 
 `metering_entries.raw_event_id` is always NULL for sweep-driven entries — set only when metering originates from an HTTP-ingested CloudEvent.
@@ -316,7 +323,7 @@ Cost Management must support three billing models:
 | Cluster (CaaS) | Capacity-based | cluster-month | Metered |
 | VM (VMaaS) | Capacity-based | VM-month | Metered |
 | Model (MaaS) | Consumption-based | per-million-tokens, per-million-requests | **Partial** — ingest, inventory, and token meters implemented; OSAC event schema TBD |
-| Bare Metal (BMaaS) | TBD | TBD | Not started — blocked on OSAC schema |
+| Bare Metal (BMaaS) | Capacity-based | BM-month | Implemented — `bm_uptime_seconds`; parked from Jul 31 demo scope |
 
 ### Capacity-Based (CaaS / VMaaS) — PoC implementation
 
@@ -330,7 +337,6 @@ Charge is based on what was provisioned, not what was used. The PoC emits these 
 Final metering on DELETE is implemented for VMs only (not clusters).
 
 **Not implemented in PoC:**
-- `cluster_worker_node_count` (target metric; see [metering-spec-draft.md](metering/metering-spec-draft.md))
 - Per-`host_type` breakdown for control plane vs workers
 - Koku-style aggregations: `SUM(duration_seconds)` where `host_type = _control_plane`, `MAX(node_count)` per host_type
 

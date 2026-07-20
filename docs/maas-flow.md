@@ -68,10 +68,9 @@
 
 8. **Our ingest endpoint** receives the CloudEvent, stores it in
    `raw_events`, and creates metering entries:
-   - `maas_tokens_in` (prompt tokens)
-   - `maas_tokens_out` (completion tokens)
-   - `maas_tokens_cached` (cached input tokens — discounted)
-   - `maas_tokens_reasoning` (reasoning tokens — premium)
+   - `maas_tokens_in` (prompt/input tokens, includes cached)
+   - `maas_tokens_out` (completion/output tokens, includes reasoning)
+   - `maas_requests` (API request count)
 
 9. **Rating sweep** (every 30s) applies rates to produce cost entries
    with Infrastructure/Supplementary classification.

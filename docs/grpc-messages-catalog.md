@@ -63,9 +63,14 @@ on the OSAC side, how we consume it, and current processing status.
 ### Model (MaaS) — No OSAC Entity
 
 OSAC does not define a Model proto, API, or Watch stream event. We receive
-`model_name` in the `osac.model.lifecycle` CloudEvent `data` payload and use
-that as the model identifier (upserted into `inventory_model`). This works
-for the PoC; if OSAC later adds a formal Model entity, we adopt it then.
+model data via two HTTP ingest event types:
+- `osac.model.lifecycle` — our mock/simulator format
+- `inference.tokens.used` — the real IPP external-metering plugin format
+  ([source](https://github.com/opendatahub-io/ai-gateway-payload-processing/blob/main/pkg/plugins/external-metering/plugin.go))
+
+Both are handled by `handleModelEvent` in `internal/ingest/handler.go` and
+produce the same 3 meters (`maas_tokens_in`, `maas_tokens_out`, `maas_requests`).
+See [CloudEvents catalog](cloudevents-catalog.md) for the full schema comparison.
 The IPP external-metering plugin is an alternative path that bypasses the
 need for an OSAC Model entity entirely.
 

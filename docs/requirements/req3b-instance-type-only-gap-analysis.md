@@ -13,7 +13,23 @@
 > calculation works purely from `instance_type`. This doc is that
 > verification.
 
-## TL;DR
+## Implementation Progress (updated Jul 18, 2026)
+
+> Gaps 1, 2, and 5 from this analysis have been addressed in PR #59:
+> - **Gap 1 (metering catalog fallback):** Done — `computeInstanceMeters`
+>   resolves cores/memory from `InstanceType` catalog when `cores == 0`
+> - **Gap 2 (per-SKU rate dimension):** Done — `instance_type` dimension
+>   on `rates` table with 4-way fallback in `matchRate`
+> - **Fix 1 (tests):** Done — `TestComputeInstanceMeters_CatalogFallback`,
+>   `TestComputeInstanceMeters_CatalogMissStaysZero`,
+>   `TestMatchRate_InstanceTypeSpecificTakesPrecedence`
+> - See [rate configuration guide](../rate-configuration-guide.md) for
+>   the three pricing models now supported
+>
+> Remaining: Fix 3 (reconciler refresh), Fix 4 (guard metric), Fix 6
+> (instance_type on heartbeat CloudEvents)
+
+## TL;DR (written before PR #59 — some gaps below are now closed)
 
 **It will break.** Today `vm_cpu_core_seconds` and `vm_memory_gib_seconds`
 are computed in the metering sweep as `cores × duration` and
@@ -190,13 +206,13 @@ pricing approach already required above").
 | Capability | Required (per REQ-3b) | Status | Notes |
 |---|---|---|---|
 | `InstanceType` catalog synced from OSAC | Yes | **Done** | Watch + reconciler, `inventory_instance_type` |
-| Metering resolves cores/memory via catalog when absent on instance | Yes (post-change) | **Gap** | Only the summarizer has this fallback; metering sweep does not |
-| Metering resolves cores/memory via catalog **unconditionally** (not just cores==0) | Recommended | **Gap** | See "Detection" below — a `0`-valued real VM is indistinguishable from a post-change VM without this |
-| Rate keyed on `instance_type` (catalog-item price) | Yes — this is REQ-3b's core ask | **Gap** | Rating has no `instance_type` dimension at all today |
+| Metering resolves cores/memory via catalog when absent on instance | Yes (post-change) | **Done** (PR #59) | `computeInstanceMeters` falls back to `InstanceType` catalog when `cores == 0` |
+| Metering resolves cores/memory via catalog **unconditionally** (not just cores==0) | Recommended | **Gap** | Current fallback triggers only on `cores == 0`; see "Detection" below |
+| Rate keyed on `instance_type` (catalog-item price) | Yes — this is REQ-3b's core ask | **Done** (PR #59) | 4-way fallback: tenant+instance_type > instance_type > tenant > global |
 | Reconciler refreshes cores/memory/instance_type on already-known VMs | Implicit | **Gap** (pre-existing) | Reconciler only fills in VMs missing from inventory; stale rows never get corrected drift from the Watch stream outage |
 | `instance_type` on ingest heartbeat CloudEvents | No, but relevant | **Missing** | `ComputeInstanceEventData` has no `instance_type` field; can't do catalog lookup from a heartbeat alone today |
 | Detection/alerting when a meter silently zeroes out | Not required, strongly recommended | **Gap** | No metric, log, or guard exists today for "billable meter value is 0 for a running instance with no free tier" |
-| Test coverage for catalog-fallback metering | Yes (billing-critical) | **Gap** | Needs to be written before the refactor, per `CLAUDE.md` |
+| Test coverage for catalog-fallback metering | Yes (billing-critical) | **Done** (PR #59) | `TestComputeInstanceMeters_CatalogFallback`, `TestComputeInstanceMeters_CatalogMissStaysZero`, `TestComputeInstanceMeters_InstanceTypePropagated` |
 
 ## Detection: How Do We Know When OSAC Actually Makes the Change?
 

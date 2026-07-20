@@ -82,14 +82,9 @@ func TestSeedDefaultQuotas(t *testing.T) {
 func TestSweep_RatesUnratedEntries(t *testing.T) {
 	ctx := context.Background()
 
-	// Clean up orphaned unrated entries from prior test runs so the
-	// sweep reaches our test entries within its batch limit.
-	testStore.Pool().Exec(ctx, `
-		DELETE FROM metering_entries WHERE id IN (
-			SELECT me.id FROM metering_entries me
-			LEFT JOIN cost_entries ce ON ce.metering_entry_id = me.id
-			WHERE ce.id IS NULL
-		)`)
+	// Clean up unrated entries from prior test runs so the sweep
+	// reaches our test entries within its batch limit.
+	testStore.Pool().Exec(ctx, `UPDATE metering_entries SET rated_at = NOW() WHERE rated_at IS NULL`)
 
 	ts := time.Now().UnixNano()
 	resourceID := fmt.Sprintf("sweep-test-vm-%d", ts)

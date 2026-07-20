@@ -148,6 +148,8 @@ Read-only, idempotent, sub-second. Not an alerting channel.
 GET /api/cost/v1/tenants/{tenant_id}/quota-status
 ```
 
+> **Current implementation:** `GET /api/v1/quotas/{tenant_id}` (see [api-reference.md](../../api-reference.md))
+
 Query params: `project_id`, `meter_name`, `limit_kind` (`quota` | `budget` | both).
 
 Single-quota shortcut for OPA: `GET .../tenants/{tenant_id}/quotas/{quota_id}/status` → one object or `404`.
@@ -204,9 +206,9 @@ See [data-model.md](../../data-model.md). Additions:
 
 **`quotas` cache:** `external_id`, `synced_at`, `deleted_at` — populated only by OSAC sync job.
 
-**`alert_rules`:** `quota_id`, `threshold_pct`, `threshold_level`, `resolve_pct` (default `threshold_pct - 5`), `enabled`.
+**`alert_rules`** (planned, not built): `quota_id`, `threshold_pct`, `threshold_level`, `resolve_pct` (default `threshold_pct - 5`), `enabled`.
 
-**`alerts`:** `limit_kind`, `project_id`, `meter_name`, `period_start`/`period_end`, `threshold_level`, `delivery_status`, `last_delivery_at`, `delivery_attempts`, `ce_id`.
+**`alerts`** (planned schema above; actual is simpler): `id`, `tenant_id`, `meter_name`, `threshold_pct`, `consumed`, `limit_value`, `period`, `state`, `fired_at`. No `limit_kind`, `project_id`, `delivery_status`, `delivery_attempts`, or `ce_id` — thresholds are hardcoded at 50/70/90/100% in `rating.go`.
 
 ---
 

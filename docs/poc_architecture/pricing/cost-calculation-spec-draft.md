@@ -47,22 +47,36 @@ Model-as-a-Service charges per unit of inference consumed, not per provisioned c
 
 ## 3. Rate Storage
 
-Rates are stored in the `rates` table, keyed by `resource_type`, `meter_name`, and optionally `tenant_id` for tenant-specific pricing.
+Rates are stored in the `rates` table, keyed by `resource_type`, `meter_name`, and optionally `tenant_id` and `instance_type` for per-tenant and per-SKU pricing.
+
+> **Actual implementation** (differs from the original spec below):
+> - PK is `BIGSERIAL`, not UUID
+> - `tenant_id` is `TEXT`, not UUID
+> - `unit_divisor` was not implemented — `price_per_unit` is stored
+>   pre-converted (e.g. `$0.01/hour / 3600 = $/second`)
+> - Added: `instance_type TEXT` (per-SKU pricing), `koku_metric TEXT`,
+>   `cost_type TEXT` (Infrastructure/Supplementary), `tiers JSONB`,
+>   `description TEXT`
+> - See [`internal/inventory/store.go`](../../../inventory-watcher/internal/inventory/store.go) for the actual schema
 
 ```
-rates
-  id              UUID PK
+rates (actual)
+  id              BIGSERIAL PK
+  tenant_id       TEXT NULL    -- NULL/empty = default rate; non-NULL = tenant override
   resource_type   TEXT         -- 'compute_instance', 'cluster', 'bare_metal', 'model'
-  meter_name      TEXT         -- e.g. 'vm_uptime_seconds', 'tokens_in'
-  tenant_id       UUID NULL    -- NULL = default rate; non-NULL = tenant override
-  price_per_unit  DECIMAL
-  unit_divisor    INTEGER      -- seconds → hours: 3600; tokens → millions: 1_000_000
+  instance_type   TEXT         -- empty = all instance types; non-empty = per-SKU rate
+  meter_name      TEXT         -- e.g. 'vm_uptime_seconds', 'maas_tokens_in'
+  koku_metric     TEXT         -- Koku metric mapping (optional)
+  cost_type       TEXT         -- 'Infrastructure' or 'Supplementary'
+  price_per_unit  DECIMAL      -- pre-converted to per-unit (seconds, tokens)
   currency        TEXT         -- 'USD'
+  tiers           JSONB        -- tiered pricing bands (see §4)
+  description     TEXT
   effective_from  TIMESTAMPTZ
   effective_to    TIMESTAMPTZ NULL
 ```
 
-For PoC, rates are seeded manually from the OSAC service catalog (REQ-3b). Automated sync from OSAC is a post-PoC concern.
+Rate lookup uses a 4-way fallback: tenant+instance_type > instance_type > tenant > global. See [rate configuration guide](../../rate-configuration-guide.md).
 
 ---
 
@@ -80,13 +94,18 @@ Tiered pricing allows the first N units to be charged at one rate (or free), wit
 
 ### 4.2 Tier Schema
 
+> **Actual implementation:** Tiers are stored as a JSONB column `tiers`
+> on the `rates` table, not as a separate `rate_tiers` table. Each
+> entry is `{"up_to": N, "price_per_unit": P}` where `up_to: null`
+> means unbounded (final tier). The original spec below was not built.
+
 ```
-rate_tiers
-  id              UUID PK
-  rate_id         UUID FK → rates.id
-  tier_order      INTEGER      -- evaluation sequence (ascending)
-  up_to_quantity  DECIMAL NULL -- NULL = unlimited (final tier)
-  price_per_unit  DECIMAL
+rates.tiers (JSONB array — actual implementation)
+  [
+    {"up_to": 100,  "price_per_unit": 0.10},
+    {"up_to": 500,  "price_per_unit": 0.05},
+    {"up_to": null, "price_per_unit": 0.01}   -- unbounded final tier
+  ]
 ```
 
 ### 4.3 Tier Evaluation
@@ -115,10 +134,10 @@ For the PoC, flat rates (no tiers) are sufficient. The tier schema is defined to
 ### 5.1 Basic Formula
 
 ```
-cost_amount = metered_value × (price_per_unit / unit_divisor)
+cost_amount = metered_value × price_per_unit
 ```
 
-All meters store raw SI units (seconds, core-seconds, GiB-seconds, node-seconds). The `unit_divisor` in the rates table converts to the billing unit (÷ 3600 for hours, ÷ 1,000,000 for millions of tokens).
+All meters store raw SI units (seconds, core-seconds, GiB-seconds, tokens). `price_per_unit` is stored pre-converted to match the meter unit — e.g. `$0.01/hour` is stored as `$0.01 / 3600 = $0.00000278/second`. If tiers are present on the rate, `applyTieredRate` (graduated/waterfall) is used instead.
 
 ### 5.2 Sub-Monthly Amortization (Monthly Rates)
 

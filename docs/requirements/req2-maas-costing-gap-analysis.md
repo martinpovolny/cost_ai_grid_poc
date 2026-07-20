@@ -89,7 +89,7 @@ RHOAI (OpenShift AI) is the system that serves model inference. Metrics
 like token counts and request counts originate there. Two options:
 
 - **OSAC collects** from RHOAI and forwards to Cost via events (preferred —
-  keeps Cost as a pure consumer)
+  keeps Cost as a pure consumer). Agreed: OSAC collects and forwards to Cost.
 - **Cost collects** directly from RHOAI (makes Cost coupled to RHOAI internals)
 
 **Impact on us:** If OSAC collects, we just add a new event handler. If Cost
@@ -151,7 +151,7 @@ it just needs: resource_type, resource_id, tenant_id, and meter values.
 1. **Model inventory** — `inventory_model` table tracking model deployments
    with model_name, tenant, project, template, state.
 
-2. **MaaS metering pipeline** — consumption-based metering with 4 meters:
+2. **MaaS metering pipeline** — consumption-based metering with 3 meters:
    `maas_tokens_in`, `maas_tokens_out`, `maas_requests`. Event-driven (no periodic sweep needed).
 
 3. **Ingest endpoint** — HTTP POST `/api/v1/events` accepts MaaS CloudEvents
@@ -190,7 +190,6 @@ it just needs: resource_type, resource_id, tenant_id, and meter values.
 |---|---|---|
 | MaaS CloudEvents schema | **Proposed only** | Not confirmed by OSAC — see open questions above |
 | OSAC Model entity | **Does not exist** | No proto, no API, no Watch stream events |
-| RHOAI metric collection | **Unresolved** | Who collects: OSAC or Cost? |
 | Tiered pricing for MaaS | **Supported, not configured** | Engine supports tiers; no tier definitions created yet |
 | Per-model rate overrides | **Supported, not configured** | Rates can be set per tenant; per-model requires rate lookup by model_name (future) |
 
@@ -200,7 +199,7 @@ it just needs: resource_type, resource_id, tenant_id, and meter values.
 |---|---|---|---|
 | Model inventory tracking | Yes | **Done** | `inventory_model` table |
 | MaaS event ingestion | Yes | **Done (mock)** | Ingest endpoint + simulator; blocked on real OSAC events |
-| Token/request metering | Yes | **Done** | 4 meters, consumption-based |
+| Token/request metering | Yes | **Done** | 3 meters, consumption-based |
 | Rate engine | Yes | **Done** | Flat + tiered pricing, default rates seeded, 30s rating sweep |
 | Cost computation within 60s | Yes | **Met** | <1ms per event at 1700 events/s; rated within 30s |
 | MaaS CloudEvents schema | Yes | **Proposed only** | Not confirmed by OSAC |

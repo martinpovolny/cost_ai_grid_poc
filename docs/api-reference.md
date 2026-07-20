@@ -11,10 +11,12 @@
 |---|---|---|---|---|
 | GET | `/healthz` | Kubernetes liveness probe | `handleLiveness` | `TestLivenessProbe` |
 | GET | `/readyz` | Kubernetes readiness probe (pings DB) | `handleReadiness` | `TestReadinessProbe` |
-| POST | `/api/v1/events` | Ingest CloudEvents (VM, Cluster, MaaS, IPP, custom) | `handleEvent` | `TestIngestMaaSEvent`, `TestIngestVMHeartbeat`, `TestIngestClusterHeartbeat`, `TestIngestIPPAuthoritativeFormat`, `TestIngestVMaaSAuthoritativeFormat`, `TestIngestCaaSAuthoritativeFormat`, `TestIngestCustomMetricEvent` |
+| POST | `/api/v1/events` | Ingest CloudEvents (VM, Cluster, MaaS, IPP, custom) | `handleEvent` | `TestIngestMaaSEvent`, `TestIngestVMHeartbeat`, `TestIngestClusterHeartbeat`, `TestIngestIPPAuthoritativeFormat`, `TestIngestVMaaSAuthoritativeFormat`, `TestIngestCaaSAuthoritativeFormat`, `TestIngestCustomMetricEvent`, `TestTenantAttribution_OrganizationID`, `TestMaaSUserIDPropagation`, `TestEventIngestResponseCode`, `TestIngestNegativeDurationRejected` |
 | GET | `/api/v1/quotas/{tenant_id}` | Quota status with alerts | `handleQuotaStatus` | `TestQuotaStatus`, `TestQuotaStatusMissingTenant`, `TestQuotaStatusWithConsumption` |
-| GET | `/api/v1/reports/costs` | Cost report (JSON/CSV, group by tenant/type/meter/resource/project/user) | `handleCostReport` | — |
+| GET | `/api/v1/reports/costs` | Cost report (JSON/CSV, group by tenant/type/meter/resource/project/user) | `handleCostReport` | `TestCostReport_GroupByTenant`, `TestCostReport_DailyResolution`, `TestCostReport_FromToParams`, `TestCostReport_CSV` |
+| GET | `/api/v1/reports/breakdown` | Per-resource cost line items (JSON/CSV) | `handleCostBreakdown` | `TestCostBreakdown`, `TestCostBreakdown_CSV` |
 | GET | `/api/v1/reports/summary` | Pipeline health counts | `handlePipelineSummary` | — |
+| POST | `/api/v1/reconcile` | Trigger manual reconciliation | `handleReconcile` | `TestReconcileNotConfigured` |
 | GET | `/api/v1/customers/{id}/entitlements/{key}/value` | Balance check (IPP compatible) | `handleBalanceCheck` | `TestBalanceCheckResponseFormat` |
 | GET | `/api/v1/debug/config` | Diagnostic config (secrets masked) | `handleDebugConfig` | — |
 | GET | `/debug/dashboard` | Built-in diagnostic dashboard (HTML) | `handleDebugDashboard` | — |
@@ -56,7 +58,7 @@ connection pool with a 2-second timeout.
 Ingest a MaaS CloudEvent. Processes through the full pipeline:
 raw_events → inventory_model → metering_entries.
 
-**Handler:** [`handleEvent`](../inventory-watcher/internal/ingest/handler.go) (line 62)
+**Handler:** [`handleEvent`](../inventory-watcher/internal/ingest/handler.go)
 
 ### Request
 
@@ -119,7 +121,7 @@ raw_events → inventory_model → metering_entries.
 
 | Status | Body | Meaning |
 |---|---|---|
-| `202 Accepted` | `{"status":"accepted"}` | Event processed successfully |
+| `204 No Content` | *(empty body)* | Event processed successfully |
 | `400 Bad Request` | `{"error":"..."}` | Malformed JSON |
 | `409 Conflict` | `{"status":"duplicate"}` | Event ID already exists (deduplicated) |
 | `500 Internal Server Error` | `{"error":"..."}` | Database or processing error |
@@ -129,7 +131,7 @@ raw_events → inventory_model → metering_entries.
 On success, the event is processed through:
 1. **raw_events** — stored immutably ([`InsertRawEvent`](../inventory-watcher/internal/inventory/store.go))
 2. **inventory_model** — upserted ([`UpsertModel`](../inventory-watcher/internal/inventory/store.go))
-3. **metering_entries** — 4 entries created ([`MeterMaaSEvent`](../inventory-watcher/internal/metering/metering.go)):
+3. **metering_entries** — 3 entries created ([`MeterMaaSEvent`](../inventory-watcher/internal/metering/metering.go)):
    `maas_tokens_in`, `maas_tokens_out`, `maas_requests`
 4. **cost_entries** — created asynchronously by the rating sweep (every 30s)
 
@@ -139,7 +141,7 @@ On success, the event is processed through:
 
 Returns quota consumption status for a tenant in the current monthly period.
 
-**Handler:** [`handleQuotaStatus`](../inventory-watcher/internal/ingest/handler.go) (line 122)
+**Handler:** [`handleQuotaStatus`](../inventory-watcher/internal/ingest/handler.go)
 
 ### Parameters
 
