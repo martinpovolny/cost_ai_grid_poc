@@ -89,7 +89,7 @@ RHOAI (OpenShift AI) is the system that serves model inference. Metrics
 like token counts and request counts originate there. Two options:
 
 - **OSAC collects** from RHOAI and forwards to Cost via events (preferred —
-  keeps Cost as a pure consumer)
+  keeps Cost as a pure consumer). Agreed: OSAC collects and forwards to Cost.
 - **Cost collects** directly from RHOAI (makes Cost coupled to RHOAI internals)
 
 **Impact on us:** If OSAC collects, we just add a new event handler. If Cost
@@ -190,7 +190,6 @@ it just needs: resource_type, resource_id, tenant_id, and meter values.
 |---|---|---|
 | MaaS CloudEvents schema | **Proposed only** | Not confirmed by OSAC — see open questions above |
 | OSAC Model entity | **Does not exist** | No proto, no API, no Watch stream events |
-| RHOAI metric collection | **Unresolved** | Who collects: OSAC or Cost? |
 | Tiered pricing for MaaS | **Supported, not configured** | Engine supports tiers; no tier definitions created yet |
 | Per-model rate overrides | **Supported, not configured** | Rates can be set per tenant; per-model requires rate lookup by model_name (future) |
 

@@ -15,6 +15,7 @@
 2. **Standalone bare metal** — Do we need to support bare metal nodes
    outside of an OpenShift cluster? The proto supports it but the
    requirement is unclear.
+   Answer: YES. RHEL bare metal, Windows bare metal, etc are a reality.
 
 3. **BareMetalInstance in public Watch stream** — Currently only in the
    private event stream (field 27). Any plans to add it to the public
@@ -183,12 +184,13 @@
     > feasible for Jul 31 or Aug 31; if not, action item is to track it
     > as future work.
 
-17. ~~**Quota scope**~~ — **Resolved.** Quotas/budgets scoped per tenant
-    AND per project. Projects roll up to tenant (sum of project
-    consumptions cannot exceed tenant quota). Overcommitting at project
-    level is allowed. Currently we only have tenant-level quotas;
-    project-level quotas with rollup is new work.
-    *Source: PR #33 (Pau Garcia Quiles), REQ-3a acceptance criteria.*
+17. ~~**Quota scope**~~ — **Resolved (updated Jul 20, 2026).** Quotas/budgets
+    scoped per tenant AND per project. Projects roll up to tenant (sum of
+    project consumptions cannot exceed tenant quota). **Sum of project-level
+    limits must not exceed the tenant-level limit** (no overcommit of limits).
+    Currently we only have tenant-level quotas; project-level quotas with
+    rollup is new work. See [req9-quota-budget-gap-analysis.md](req9-quota-budget-gap-analysis.md).
+    *Source: PR #33 (Pau Garcia Quiles), REQ-3a/REQ-9; overcommit rule clarified Jul 20.*
 
 18. **RBAC model** — Pau clarified (PR #33): "Using Insights RBAC is
     NOT mandatory. We may want to move to a simpler model, e.g. per

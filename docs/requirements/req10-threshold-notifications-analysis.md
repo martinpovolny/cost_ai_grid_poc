@@ -91,7 +91,7 @@ In the rating sweep (every 30s), after processing metering entries:
 
 1. For each tenant with active quotas
 2. Compute current consumption percentage
-3. Check each threshold level (50, 70, 90, 100)
+3. Check each threshold level (50, 70, 90, 100). Ideally, thresholds should be configurable by OSAC Cloud/Tenant Admin roles and/or Cost Management Administrators (depending on which one is the source of truth for the thresholds). It should be possible to configure thresholds for different tenants and meters separately.
 4. If crossed and not already in `alerts` → insert alert + deliver
 
 ### 3. Webhook Delivery

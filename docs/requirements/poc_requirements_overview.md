@@ -1,7 +1,7 @@
 # AI Grid PoC — Cost Management Requirements
 
-**Version:** 1.4
-**Date:** July 14, 2026
+**Version:** 1.5
+**Date:** July 20, 2026
 **Status:** Hardening (Still in Flux)
 
 This document is the consolidated requirements reference for the Cost Management AI Grid Proof of Concept. It merges the initial requirements brief with the detailed requirements summary. MaaS (token metering and OpenShift AI cloud events), Cost Tiers, and Custom Metrics are included as in-scope PoC requirements.
@@ -66,6 +66,7 @@ Charge based on what was provisioned (VM size, cluster config) and for how long.
 **Scope:**
 - IN: Capacity-based charging for clusters and VMs
 - OUT: Usage-based metering; per-workload metric scraping (token metering addressed by REQ-2a and REQ-4)
+- OUT: Bare metal charging (because OSAC does not yet support it, but it is a requirement for the AI Grid PoC)
 
 ---
 
@@ -82,14 +83,13 @@ Connect RHCM to the OSAC Region Management Cluster (gRPC/REST APIs) to read inve
 - Integration does not degrade orchestrator UX
 
 **Current State:**
-- OSAC integration has never been attempted
 - Previous integration exists as reference
 - Region Management Cluster confirmed as integration point (Jun 23)
 - OSAC uses gRPC and REST (not the Kubernetes API)
 - Ecosystem/Flight Path team may contribute code
 
 **Open Questions:**
-- Full list of CloudEvent types OSAC will produce (CaaS, VMaaS, BMaaS, MaaS)
+- Full list of CloudEvent types OSAC will produce (~CaaS~ (available), ~VMaaS~ (available), BMaaS, MaaS)
 
 **References:**
 - [VMaaS CloudEvents schema](https://github.com/masayag/osac-metering-discover-poc/blob/main/collector/README.md#cloudevents-schema)
@@ -115,13 +115,14 @@ Receive heartbeat events from OSAC via HTTP or Kafka (transport TBD per Jun 24 m
 - Events processed and cost calculated within target SLA
 
 **Current State:**
-- PoC satisfies this requirement functionally via the local 60s sweep
+- PoC satisfies this requirement functionally via the local 60s sweep.
 - OSAC metering collector exists ([osac-metering-discover-poc](https://github.com/masayag/osac-metering-discover-poc)) but not yet connected to Cost Management
 - Transport and delivery of heartbeat CloudEvents to Cost Management not yet agreed (R-5, R-6 in event-types.md)
 
 **Open Questions:**
 - Transport mechanism: Kafka, HTTP, NATS?
 - Interval: every 10s, every 30s proposed on the Jun 23rd meeting. It should be configurable.
+- Should the sweep be shorter (e.g. every 50s instead of every 60s) to ensure 30s + 50s + processing time < 90s?
 
 **Scope:**
 - IN: Receive and process periodic lifecycle CloudEvents for capacity-based charging
@@ -186,7 +187,7 @@ Map OSAC's `Tenant → Project` hierarchy to RHCM's organizational model. All co
 - Cost data can be drilled down to project level within a tenant
 - Tenant/project hierarchy read from OSAC Region Management Cluster
 - Multi-tenant attribution works even when all workloads run on shared infrastructure
-- Quotas/budgets tracked per OSAC project, per tenant, and projects roll up to tenant, i. e. sum of all project consumptions cannot exceed tenant quota/budget. This also allows for overcomitting quotas/budgets at the project level.
+- Quotas/budgets tracked per OSAC project, per tenant, and projects roll up to tenant, i. e. sum of all project consumptions cannot exceed tenant quota/budget. Sum of project-level quota/budget *limits* must not exceed the tenant-level limit (no overcommit of limits across projects).
 
 
 **Current State:**
@@ -195,8 +196,10 @@ Map OSAC's `Tenant → Project` hierarchy to RHCM's organizational model. All co
 - Mapping OSAC tenants to RHCM organizations needs design
 
 **Open Questions:**
-- Will providers view cost in the Cost Management UI or in OSAC?
-- Is RBAC needed for providers viewing cross-project cost data?
+- Will providers view cost in the Cost Management UI or in OSAC? As of 7/20 it seems Cost Management UI is the preferred option..
+- Is RBAC needed for providers viewing cross-project cost data? As of 7/20, there's no RBAC beyond project: 
+  - If you have access to a project, you have access to everything in that project
+  - Users may have access to multiple projects, but they will only see cost for the projects they have access to.
 
 > **Decision (Jul 2, 2026):** RBAC scope for PoC is **tenant + project level only**.
 > Fine-grained InsightsRBAC is deferred post-PoC provided that Cost Management implements the concept of project within a tenant, mimicking OSAC (e.g. via Keycloak). Project + tenant attribution is
@@ -214,7 +217,7 @@ Map OSAC's `Tenant → Project` hierarchy to RHCM's organizational model. All co
 Single system of record for cost data with drill-down by tenant, project, model, and user. Covers both capacity-based (compute hours) and consumption-based (token/request) dimensions.
 
 **Acceptance Criteria:**
-- Cost data filterable by: tenant, model/SKU, application, user
+- Cost data filterable by: tenant, model/SKU, application, user (in general, by any property that is available in the CloudEvents from OSAC, including tags is available)
 - Dashboard shows near-real-time token consumption, compute hours, and estimated costs
 - Reporting supports export in CSV and JSON
 - Financial data decoupled from infrastructure state
@@ -236,11 +239,9 @@ Single system of record for cost data with drill-down by tenant, project, model,
 ---
 
 ### REQ-9: Quota/Budget Status API
-**Priority:** HIGH &nbsp;·&nbsp; [COST-7801](https://redhat.atlassian.net/browse/COST-7801) &nbsp;·&nbsp; **Rank:** 9
+**Priority:** HIGH &nbsp;·&nbsp; [COST-7805](https://redhat.atlassian.net/browse/COST-7805) &nbsp;·&nbsp; **Rank:** 9
 
-Provide a workflow to allow OSAC to check quota and budget status before allowing resource creation.
-
-(e.g., "Is this tenant within quota?"). Enforcement remains with OSAC; RHCM provides the data.
+Provide a workflow to allow OSAC to check fleet-level quota and budget status before allowing resource creation. I. e. is the tenant within quota? Is the tenant within budget? OSAC should be able to check the status of the tenant's projects/clusters/VMs/etc and roll up the status to the tenant level. Enforcement remains with OSAC; RHCM provides the data.
 
 **Definitions:**
 - **Quota** = dimensional limit (CPU core-hours, GiB RAM-hour, tokens, etc.). Providers set quotas for tenants based on accumulated metered consumption over a period.
@@ -249,25 +250,27 @@ Provide a workflow to allow OSAC to check quota and budget status before allowin
 
 **Acceptance Criteria:**
 - API responds with sub-second latency
-- OSAC can query: is tenant within quota? What % of budget consumed?
-- Supports threshold checks (50%, 70%, 90%, 100%)
-- Source of truth for quota data agreed between OSAC and RHCM
+- OSAC can query: is tenant within quota? What % of budget consumed? What is the status of the tenant's projects/clusters/VMs/etc and roll up the status to the tenant level?
+- Supports threshold checks (50%, 70%, 90%, 100%... as defined by OSAC Cloud Administrator or Tenant Administrator roles))
 - Grace period requirements verified
 - RHCM implements quota definition, irregardless of OSAC implementing them or not.
 - Quotas/budgets are scoped to tenants and tenant projects and rolled up from projects to tenants.
+- Sum of project-level quota/budget limits for a tenant must not exceed the tenant-level limit (no project overcommit).
 
 **Current State:**
-- No quota/budget API exists in RHCM today
+- Pull-model status API implemented: `GET /api/v1/quotas/{tenant_id}` with threshold flags and alerts
+- See [req9 gap analysis](req9-quota-budget-gap-analysis.md) for Done vs Gap (CRUD, project roll-up, monetary budgets, non-monthly windows) — **all gaps are in scope for Jul 31**
 - Enforcement is OSAC responsibility; RHCM provides the data
 
 **Open Questions:**
-- Do AI Grid requirements include grace periods?
 - Open question: is RHCM or OSAC the source of truth for quota/budget data? It does not matter: RHCM must implement quotas anyway (for non-OSAC customers) and typically who the source of truth is is resolved at implementation time via Professional Services (the source of truth could be a third system, e.g. ServiceNow, that is synchornized to both OSAC and RHCM).
 - **Budget quotas vs usage quotas need different mechanisms (Jul 14, 2026 meeting, Ronnie):** Usage quotas (VM count, storage, etc.) need a synchronous pre-check during provisioning — OSAC can't rely on an eventually-consistent notification without risking duplicated state, so the pull-based quota API (this requirement) is the right fit. Budget quotas (monetary) are more tolerant of eventual consistency, so a push notification model (REQ-10) is also viable there — the two requirements aren't fully interchangeable. See REQ-10 below.
+- How should a monetary budget be represented product-wise relative to usage quotas? (Recommendation: same ceiling concept, denominated in currency — see gap analysis.)
+- Do balance/entitlement checks need to be per feature/SKU, or is one tenant-level balance enough?
 
 **Scope:**
-- IN: Read-only quota/budget status API for OSAC consumption
-- OUT: Quota enforcement (OSAC's responsibility); budget/limit definition UI
+- IN: Read-only quota/budget status API for OSAC consumption. CRUD API must exist for RHCM to manage quotas/budgets.
+- OUT: Budget and quota enforcement (OSAC's responsibility); budget/limit definition UI; grace periods (they don't exist as a requirement but they are a good thing to have)
 
 ---
 
@@ -309,7 +312,56 @@ Send threshold notifications from RHCM to OSAC when cost/quota consumption hits 
 
 **Scope:**
 - IN: Threshold notification mechanism from RHCM to OSAC (**parked, no timeline set**)
-- OUT (PoC): Push/webhook mechanism; alert UI in RHCM; grace period enforcement (OSAC's responsibility)
+- OUT (PoC): Push/webhook mechanism; alert UI in RHCM; grace period enforcement (OSAC's responsibility); Event-Driven Ansible events.
+
+---
+
+### REQ-14: Wallets (Prepaid Balance)
+**Priority:** HIGH &nbsp;·&nbsp; [COST-7939](https://redhat.atlassian.net/browse/COST-7939) &nbsp;·&nbsp; **Rank:** 19
+
+**Source:** AI Grid MB-005 requirement.
+Support prepaid wallets so service providers can move from post-payment to pre-payment. Customers top up a wallet with a monetary amount; metered spend is deducted from that balance. When remaining funds fall below a configurable threshold (e.g. less than X% of the topped-up amount), alerts are sent.
+
+**Definitions (contrast with REQ-9):**
+- **Budget** (REQ-9) = monetary *ceiling* — "do not spend more than $N" (typically over a period; unused budget is not prepaid cash)
+- **Wallet** (this requirement) = prepaid *balance* — "spend was prepaid; deduct until balance reaches zero (or a reserved floor)"
+- Both may coexist: a tenant can have a wallet balance *and* a budget/quota limit
+
+**Why not implement wallets as “budgets with no time limit”?**
+
+A wallet *looks* a bit like an open-ended monetary budget (a balance that shrinks as spend accrues). Modeling it that way is tempting but is a poor product fit for two reasons:
+
+1. **Leaks internal Cost Management complexity to Sovereign Cloud admins.** OSAC / tenant administrators should think in prepaid-wallet terms (top up, remaining balance, low-balance alerts). Forcing them to configure “a budget with no spend-by date” exposes Cost’s quota/budget machinery as the user model and confuses the prepaid product with post-paid spending limits.
+2. **Settlement already happened at top-up.** When a customer tops up with a credit card, that money is already in the Sovereign Cloud’s coffers. Billing and settlement occur at top-up time — not later when metered usage is consumed. A budget models a *future* spend ceiling on usage that will be billed; a wallet models *already-collected* funds that are drawn down. Treating draw-down as “budget consumption” would imply the wrong commercial/settlement semantics (as if the money still needed to be billed).
+
+Wallets therefore need an explicit prepaid-balance concept (this requirement), even if some ledger mechanics are shared with budgets under the hood.
+
+**Acceptance Criteria:**
+- RHCM can create, top up, and query wallet balances scoped to tenant (and optionally project)
+- Metered cost is deducted from the wallet balance as spend accrues
+- OSAC (or other consumers) can query remaining balance / % remaining via API (same latency expectations as REQ-9)
+- Configurable low-balance thresholds trigger alerts (pairs with threshold notification work in REQ-10; see also Cost alerts/notifications tracking)
+- Wallet operations are auditable (top-ups, deductions, adjustments), i.e. they leave a trace in Cost Management audit log (the other side of the auditing will happen in the billing tool, e.g. Lago)
+
+**Current State:**
+- No wallet / prepaid-balance concept exists in RHCM today
+- Closest existing capability is budgets/quotas (REQ-9), which model spending limits rather than prepaid credits
+- AI Grid MB-005 was marked Out of Scope for the trial/product cut in HIGHTP tracking (Jul 2026); Cost still needs the capability for prepaid provider models — PoC task [COST-7939](https://redhat.atlassian.net/browse/COST-7939), product feature [COST-7938](https://redhat.atlassian.net/browse/COST-7938)
+
+**Open Questions:**
+- Wallet scope: tenant-only, or tenant + project (and can projects share a tenant wallet)?
+- Who owns top-up UX / payment capture — Cost UI, OSAC, or an external billing system (Lago/Zuora/etc.) with Cost as balance ledger?
+- On zero/insufficient balance: does Cost only report status (like REQ-9), or must it participate in hard stop of provisioning/inference (enforcement still expected to be OSAC's)?
+- Relationship to reserved allocations / multipliers called out under MB-005 (those remain customer billing-system responsibilities per AI Grid notes)
+
+**Related:**
+- REQ-9 (Quota/Budget Status API) — complementary monetary controls
+- REQ-10 (Threshold Notification Back Channel) — low-balance alerts
+- [COST-7938](https://redhat.atlassian.net/browse/COST-7938) — Cost Management feature
+
+**Scope:**
+- IN: Wallet ledger (balance, top-up, deduction from metered spend); status API for remaining balance / threshold flags
+- OUT: Payment gateway / credit-card capture; enforcement of hard stop on zero balance (OSAC); reserved allocations and billing multipliers (customer billing system per MB-005)
 
 ---
 
@@ -449,13 +501,13 @@ Export chargeback reports covering both capacity-based (provisioned compute hour
   fields that depend on data we don't have yet (SKUs, product family —
   tied to the service catalog, see REQ-3b), not implementation
   complexity. Consensus: a Cost-owned custom export format (with
-  adapters, similar to how Koku adapts for Ibexa/Zora) is acceptable
+  adapters, similar to how Koku adapts for Lago/Zuora) is acceptable
   until a specific billing-format requirement shows up. Action item:
   Martin to double-check that CSV export covers every field we currently
   track (open-ended, no specific gap identified yet).
 
 **Scope:**
-- IN: Chargeback reports for all PoC workloads (capacity and MaaS)
+- IN: Chargeback reports for all PoC workloads (capacity and MaaS). Exportable via API in CSV or JSON format.
 - OUT: Integration with external billing systems. Export in FOCUS format (though highly desirable).
 
 ---
@@ -516,13 +568,14 @@ Tiered pricing support for both capacity-based and MaaS consumption-based rates.
 Daily cost calculation for OpenShift Virtualization workloads (VMs) provisioned through OSAC.
 
 **Acceptance Criteria:**
-- Daily, even hourly, cost for every resource (CaaS, VMaaS, etc) is highly desirable. While not an explicity requirement yet, it feels like it will be just a matter of time.
+- Daily, even hourly, cost for every resource (CaaS, VMaaS, etc) is highly desirable. While not an explicity requirement yet, it feels like it will be just a matter of time. Looking at other neoclouds (QuickPod, Runpod, Vast.ai, etc), some of them calculate per-30 minute time period, per-minute and even per-second (!). The more granularity we can provide within reasonable effort, the better.
 
 **Current State:**
 - This is one of the epics comprised in [PRD13 OpenShift Virtualization fit & finish](https://github.com/project-koku/enhancements/pull/11)
 
 **Scope:**
 - Daily cost for OpenShift Virtualization VMs
+- VMs running on one cluster may be spread across multiple projects and tenants, so we need to be able to calculate the cost for each project/tenant separately, even at different rates for the same type of VM running on the same cluster (there might be different rates for different projects/tenants.)
 
 ---
 
@@ -539,18 +592,16 @@ Support bare metal nodes provisioned through OSAC (BMaaS), including potential s
 - Standalone bare metal nodes (not attached to OpenShift, i. e. Windows bare metal, RHEL bare metal, Oracle Exadata, etc) supported if required by AI Grid
 
 **Current State:**
-- OSAC bare metal service is actively being built (confirmed Jun 24)
+- OSAC bare metal service is actively being built (confirmed Jun 24), it's part of the Aug 31 OSAC deliverable.
 - BareMetalInstance not yet in the Watch stream `oneof`; available via REST List API
 - Implementation follows same reconciler pattern as VMs — ready to pick up post-PoC
 - Jul 2 meeting: deferred from PoC scope
 
 **Open Questions:**
 - OSAC needs to define the BMaaS CloudEvents schema first
-- Do we need to support nodes outside of an OCP cluster?
 
 **Scope:**
-- IN: Bare metal capacity-based costing via OSAC CloudEvents (**post-PoC**)
-- OUT (PoC): Bare metal costing; standalone bare metal support TBD
+- IN: Bare metal capacity-based costing via OSAC CloudEvents (**post-PoC**), nodes outside of OCP clusters supported (eg. Windows bare metal, RHEL bare metal, etc)
 
 ---
 
@@ -622,6 +673,7 @@ MFA, granular RBAC for billing admins, and short-lived auth tokens.
 | 20 | Exports | Should Have | Martin to double-check CSV export covers every field currently tracked |
 | 21 | Service Catalog | Should Have | Martin to verify cost calculation works purely from `instance_type` ahead of OSAC removing CPU/memory from `ComputeInstance` |
 | 22 | OSAC Integration | Should Have | Martin to file/coordinate a PR to expose bare metal events and catalog items on OSAC's public gRPC stream |
+| 23 | Wallets | Must Have | Design and implement prepaid wallets (REQ-14 / COST-7939 / AI Grid MB-005): top-up, deduct metered spend, low-balance alerts |
 
 ---
 
@@ -657,6 +709,25 @@ MFA, granular RBAC for billing admins, and short-lived auth tokens.
 | **Catalog price override by tenant** | (a) CSP-only pricing / (b) per-tenant pricing overrides / (c) tenant admins creating their own priced sub-offerings for their users | Raised by Moti (Jul 14, 2026 meeting), no answer yet from OSAC. Affects catalog/rate-lookup design in REQ-3b and REQ-13. See [osac-open-questions.md #22](osac-open-questions.md#catalog-pricing-model). |
 
 ---
+
+**Changelog — v1.5 (Jul 20, 2026):**
+- REQ-14 (new): Wallets (prepaid balance) — from AI Grid MB-005; PoC task [COST-7939](https://redhat.atlassian.net/browse/COST-7939) under COST-7756; product feature [COST-7938](https://redhat.atlassian.net/browse/COST-7938); contrasts with budgets (REQ-9); low-balance alerts pair with REQ-10
+- REQ-14: clarified wallets must not be modeled as “budgets with no time limit” — leaks Cost complexity to OSAC/tenant admins; top-up settlement already happened at card charge (unlike post-paid budget ceilings)
+- REQ-9: PoC task link fixed to [COST-7805](https://redhat.atlassian.net/browse/COST-7805); no project-limit overcommit; Jul 31 = full REQ-9 gap list; budget/entitlement open questions refined
+- REQ-11: admin chooses free→charge vs allow→deny; Go snippets restored to match `inventory.Tier` / `ApplyRate` (`float64`)
+- REQ-9: added [req9-quota-budget-gap-analysis.md](req9-quota-budget-gap-analysis.md); clarified boundary with REQ-11 (ceilings vs pricing); overview current state updated to match code
+- REQ-11 gap analysis: cross-linked REQ-9; windowed free→paid stays in REQ-11; hard stop after allowance → REQ-9
+- Action items: added row 23 (wallets design/implementation)
+- POC-ARCH: explicitly OUT bare metal charging for PoC (OSAC does not support it yet; still an AI Grid PoC requirement)
+- REQ-1: removed stale "integration never attempted"; marked CaaS/VMaaS CloudEvents as available; BMaaS/MaaS still open
+- REQ-2: added open question on shortening the local sweep (e.g. 50s) so 30s emit + sweep + processing stays under the 90s SLA
+- REQ-3a: as of 7/20, Cost Management UI is the preferred provider cost surface; RBAC remains project-scoped only (project access ⇒ full project visibility; multi-project users see only projects they can access)
+- REQ-6: cost data filterable by any property available on OSAC CloudEvents (including tags), not only tenant/model/application/user
+- REQ-9: reframed as fleet-level quota/budget status with project/cluster/VM roll-up to tenant; thresholds defined by OSAC Cloud/Tenant Admin roles; RHCM must expose CRUD for quotas/budgets; grace periods OUT (nice-to-have, not required); source-of-truth question closed as "does not matter — RHCM implements quotas anyway"
+- REQ-5: typo fix (Lago/Zuora); chargeback reports explicitly exportable via API as CSV or JSON
+- REQ-7: noted neocloud granularity (per-30min / per-minute / per-second) as desirable direction; VMs on one cluster may span projects/tenants and need separate costing (possibly different rates)
+- REQ-8: BMaaS called out as part of the Aug 31 OSAC deliverable; standalone bare metal (outside OCP clusters) confirmed IN for post-PoC scope
+
 
 **Changelog — v1.4 (Jul 14, 2026 meeting):**
 - REQ-3: new open question — potential PII concern for per-user MaaS cost attribution; (not resolved)

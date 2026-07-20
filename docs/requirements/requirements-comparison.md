@@ -140,6 +140,4 @@ remaining open items are LOW priority:
    tiers work; capacity meters (GiB-month, core-hours) need
    period-accumulating logic. Blocked on PM spec from Pau. See
    [design proposal](req11-cumulative-tiers-design-proposal.md).
-2. **REQ-12 — Daily OCP Virt costs** (TBD) — PM acceptance criteria
-   undefined.
 
