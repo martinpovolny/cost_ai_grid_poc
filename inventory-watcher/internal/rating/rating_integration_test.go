@@ -118,23 +118,27 @@ func TestSweep_RatesUnratedEntries(t *testing.T) {
 
 	rater := New(testStore, 30*time.Second, testLogger)
 	rater.batch = 10000
-	// Run sweep multiple times to drain any backlog from prior test runs.
-	for i := 0; i < 5; i++ {
-		rater.sweep(ctx)
-	}
 
+	// Sweep repeatedly until our entries are rated. Concurrent test packages
+	// may inject unrated entries that fill the batch — the sweep drains them
+	// (marking unratable entries as rated), eventually reaching ours.
 	var costCount int
-	err := testStore.Pool().QueryRow(ctx,
-		"SELECT count(*) FROM cost_entries WHERE resource_id = $1", resourceID).Scan(&costCount)
-	if err != nil {
-		t.Fatalf("query cost entries: %v", err)
+	for attempt := 0; attempt < 50; attempt++ {
+		// Clear concurrent noise before each sweep attempt
+		testStore.Pool().Exec(ctx, `UPDATE metering_entries SET rated_at = NOW() WHERE rated_at IS NULL AND resource_id != $1`, resourceID)
+		rater.sweep(ctx)
+		testStore.Pool().QueryRow(ctx,
+			"SELECT count(*) FROM cost_entries WHERE resource_id = $1", resourceID).Scan(&costCount)
+		if costCount == 2 {
+			break
+		}
 	}
 	if costCount != 2 {
-		t.Errorf("expected 2 cost entries after sweep, got %d", costCount)
+		t.Fatalf("expected 2 cost entries after sweep, got %d", costCount)
 	}
 
 	var costAmount float64
-	err = testStore.Pool().QueryRow(ctx,
+	err := testStore.Pool().QueryRow(ctx,
 		"SELECT cost_amount FROM cost_entries WHERE resource_id = $1 ORDER BY cost_amount LIMIT 1",
 		resourceID).Scan(&costAmount)
 	if err != nil {

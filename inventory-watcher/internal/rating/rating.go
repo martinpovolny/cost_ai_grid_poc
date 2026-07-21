@@ -75,11 +75,13 @@ func (r *Rater) sweep(ctx context.Context) {
 		rate := matchRate(rateIndex, me.TenantID, me.InstanceType, me.ResourceType, me.MeterName)
 		if rate == nil {
 			skipped++
+			ratedIDs = append(ratedIDs, me.ID)
 			key := me.ResourceType + "/" + me.MeterName
 			if !skippedMeters[key] {
 				r.logger.Warn("no rate found for meter", "resource_type", me.ResourceType, "meter_name", me.MeterName)
 				skippedMeters[key] = true
 			}
+			metrics.MeteringEntriesSkippedNoRate.WithLabelValues(me.ResourceType, me.MeterName).Inc()
 			continue
 		}
 
