@@ -235,6 +235,107 @@ func TestBuildRateIndex_FirstEntryWins(t *testing.T) {
 	}
 }
 
+func TestApplyRateCumulative_ZeroPriorMatchesPerEvent(t *testing.T) {
+	rate := inventory.RateRecord{
+		Tiers: []inventory.Tier{
+			{UpTo: ptr(100), PricePerUnit: 0.10},
+			{UpTo: nil, PricePerUnit: 0.05},
+		},
+	}
+	perEvent := ApplyRate(50, rate)
+	cumulative := ApplyRateCumulative(50, 0, rate)
+	if perEvent != cumulative {
+		t.Errorf("with zero prior, cumulative should match per-event: got %v vs %v", cumulative, perEvent)
+	}
+}
+
+func TestApplyRateCumulative_PriorInFreeTier(t *testing.T) {
+	rate := inventory.RateRecord{
+		Tiers: []inventory.Tier{
+			{UpTo: ptr(20), PricePerUnit: 0},
+			{UpTo: ptr(120), PricePerUnit: 0.08},
+			{UpTo: nil, PricePerUnit: 0.07},
+		},
+	}
+	// Prior usage = 10 (in free tier), delta = 0.07 (still in free tier)
+	cost := ApplyRateCumulative(0.07, 10, rate)
+	if cost != 0 {
+		t.Errorf("should be free: got %v", cost)
+	}
+}
+
+func TestApplyRateCumulative_CrossesFreeTierBoundary(t *testing.T) {
+	rate := inventory.RateRecord{
+		Tiers: []inventory.Tier{
+			{UpTo: ptr(20), PricePerUnit: 0},
+			{UpTo: ptr(120), PricePerUnit: 0.08},
+			{UpTo: nil, PricePerUnit: 0.07},
+		},
+	}
+	// Prior = 19.95, delta = 0.07 → crosses 20 boundary
+	// 0.05 free + 0.02 at $0.08 = $0.0016
+	cost := ApplyRateCumulative(0.07, 19.95, rate)
+	if !approxEq(cost, 0.02*0.08) {
+		t.Errorf("crossing free tier: got %v, want %v", cost, 0.02*0.08)
+	}
+}
+
+func TestApplyRateCumulative_FullMonthWorkedExample(t *testing.T) {
+	rate := inventory.RateRecord{
+		Tiers: []inventory.Tier{
+			{UpTo: ptr(20), PricePerUnit: 0},
+			{UpTo: ptr(120), PricePerUnit: 0.08},
+			{UpTo: nil, PricePerUnit: 0.07},
+		},
+	}
+	// Verify the total cost for exactly 200 GiB accumulated:
+	// first 20 free, next 100 at 0.08 ($8), next 80 at 0.07 ($5.60) = $13.60
+	totalCost := ApplyRateCumulative(200, 0, rate)
+	if !approxEq(totalCost, 13.60) {
+		t.Errorf("full month: got %.4f, want 13.60", totalCost)
+	}
+
+	// Also verify incremental accumulation produces the same result
+	// (within float64 tolerance from ~2857 additions of 0.07)
+	incrementalCost := 0.0
+	prior := 0.0
+	delta := 0.07
+	for i := 0; i < 2857; i++ {
+		c := ApplyRateCumulative(delta, prior, rate)
+		incrementalCost += c
+		prior += delta
+	}
+	remaining := 200.0 - prior
+	if remaining > 0 {
+		incrementalCost += ApplyRateCumulative(remaining, prior, rate)
+	}
+	if math.Abs(incrementalCost-13.60) > 0.10 {
+		t.Errorf("incremental accumulation drift too large: got %.4f, want ~13.60", incrementalCost)
+	}
+}
+
+func TestApplyRateCumulative_PriorInFinalTier(t *testing.T) {
+	rate := inventory.RateRecord{
+		Tiers: []inventory.Tier{
+			{UpTo: ptr(100), PricePerUnit: 0.10},
+			{UpTo: nil, PricePerUnit: 0.05},
+		},
+	}
+	// Prior = 150 (in final tier), delta = 10
+	cost := ApplyRateCumulative(10, 150, rate)
+	if !approxEq(cost, 10*0.05) {
+		t.Errorf("final tier: got %v, want %v", cost, 10*0.05)
+	}
+}
+
+func TestApplyRateCumulative_FlatRateIgnoresPrior(t *testing.T) {
+	rate := inventory.RateRecord{PricePerUnit: 0.01}
+	cost := ApplyRateCumulative(100, 5000, rate)
+	if cost != 1.0 {
+		t.Errorf("flat rate should ignore prior: got %v, want 1.0", cost)
+	}
+}
+
 func TestMatchRate_InstanceTypeSpecificTakesPrecedence(t *testing.T) {
 	rates := []inventory.RateRecord{
 		{ID: 1, TenantID: nil, InstanceType: "", ResourceType: "compute_instance", MeterName: "vm_uptime_seconds", PricePerUnit: 0.01},

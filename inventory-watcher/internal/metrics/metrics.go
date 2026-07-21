@@ -55,6 +55,12 @@ var (
 		Help:      "Errors during rating sweep.",
 	})
 
+	MeteringEntriesSkippedNoRate = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "metering_entries_skipped_no_rate_total",
+		Help:      "Metering entries skipped because no matching rate was found. Indicates misconfigured meters or missing rate definitions.",
+	}, []string{"resource_type", "meter_name"})
+
 	MeteringSweepDuration = promauto.NewHistogram(prometheus.HistogramOpts{
 		Namespace: namespace,
 		Name:      "metering_sweep_duration_seconds",

@@ -152,6 +152,8 @@ type RateRecord struct {
 	PricePerUnit  float64    `json:"price_per_unit"`
 	Currency      string     `json:"currency"`
 	Tiers         []Tier     `json:"tiers"`
+	TierMode      string     `json:"tier_mode"`
+	TierPeriod    string     `json:"tier_period"`
 	Description   string     `json:"description"`
 	EffectiveFrom time.Time  `json:"effective_from"`
 	EffectiveTo   *time.Time `json:"effective_to"`
