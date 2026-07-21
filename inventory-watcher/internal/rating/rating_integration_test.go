@@ -260,6 +260,64 @@ func TestEvaluateThresholds_FiresAlerts(t *testing.T) {
 	}
 }
 
+// TestEvaluateThresholds_CustomLevels verifies that per-quota thresholds
+// override the global [50, 70, 90, 100] levels.
+func TestEvaluateThresholds_CustomLevels(t *testing.T) {
+	ctx := context.Background()
+
+	ts := time.Now().UnixNano()
+	tenantID := fmt.Sprintf("custom-thresh-tenant-%d", ts)
+	now := time.Now().UTC()
+	periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	// Create quota with custom thresholds at 25% and 75%
+	if _, err := testStore.UpsertQuota(ctx, inventory.QuotaRecord{
+		TenantID:      tenantID,
+		MeterName:     "vm_uptime_seconds",
+		LimitValue:    1000.0,
+		Unit:          "seconds",
+		Period:        "monthly",
+		Thresholds:    []float64{25, 75},
+		EffectiveFrom: periodStart,
+	}); err != nil {
+		t.Fatalf("upsert quota: %v", err)
+	}
+
+	// Insert consumption at 30% — should fire 25% threshold but NOT 75%
+	if err := testStore.InsertMeteringEntry(ctx, inventory.MeteringEntry{
+		ResourceType: "compute_instance", ResourceID: "vm-custom-thresh", TenantID: tenantID,
+		MeterName: "vm_uptime_seconds", Value: 300.0, Unit: "seconds",
+		PeriodStart: periodStart, PeriodEnd: now,
+	}); err != nil {
+		t.Fatalf("insert metering: %v", err)
+	}
+
+	rater := New(testStore, 30*time.Second, testLogger)
+	rater.evaluateThresholds(ctx)
+
+	// Should have fired 25% but not 75%
+	var alert25, alert75 int
+	testStore.Pool().QueryRow(ctx,
+		"SELECT count(*) FROM alerts WHERE tenant_id = $1 AND threshold_pct = 25", tenantID).Scan(&alert25)
+	testStore.Pool().QueryRow(ctx,
+		"SELECT count(*) FROM alerts WHERE tenant_id = $1 AND threshold_pct = 75", tenantID).Scan(&alert75)
+
+	if alert25 == 0 {
+		t.Error("expected 25% threshold to fire at 30% consumption")
+	}
+	if alert75 != 0 {
+		t.Error("75% threshold should NOT have fired at 30% consumption")
+	}
+
+	// Should NOT have fired the global 50% threshold (custom overrides global)
+	var alert50 int
+	testStore.Pool().QueryRow(ctx,
+		"SELECT count(*) FROM alerts WHERE tenant_id = $1 AND threshold_pct = 50", tenantID).Scan(&alert50)
+	if alert50 != 0 {
+		t.Error("global 50% threshold should NOT fire when custom thresholds are set")
+	}
+}
+
 // TestSweep_CumulativeTiers verifies the full cumulative tier pipeline:
 // a rate with tier_mode="cumulative" accumulates usage over the billing
 // period and prices marginal deltas at the correct tier position.

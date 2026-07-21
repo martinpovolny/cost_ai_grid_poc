@@ -13,6 +13,10 @@
 | GET | `/readyz` | Kubernetes readiness probe (pings DB) | `handleReadiness` | `TestReadinessProbe` |
 | POST | `/api/v1/events` | Ingest CloudEvents (VM, Cluster, MaaS, IPP, custom) | `handleEvent` | `TestIngestMaaSEvent`, `TestIngestVMHeartbeat`, `TestIngestClusterHeartbeat`, `TestIngestIPPAuthoritativeFormat`, `TestIngestVMaaSAuthoritativeFormat`, `TestIngestCaaSAuthoritativeFormat`, `TestIngestCustomMetricEvent`, `TestTenantAttribution_OrganizationID`, `TestMaaSUserIDPropagation`, `TestEventIngestResponseCode`, `TestIngestNegativeDurationRejected` |
 | GET | `/api/v1/quotas/{tenant_id}` | Quota status with alerts | `handleQuotaStatus` | `TestQuotaStatus`, `TestQuotaStatusMissingTenant`, `TestQuotaStatusWithConsumption` |
+| POST | `/api/v1/quotas` | Create quota | `handleCreateQuota` | `TestCreateQuota`, `TestCreateQuota_MissingFields`, `TestCreateQuota_InvalidPeriod` |
+| GET | `/api/v1/quotas` | List all active quotas | `handleListQuotas` | `TestListQuotas`, `TestListQuotas_TenantFilter` |
+| PUT | `/api/v1/quotas/{id}` | Update quota | `handleUpdateQuota` | — |
+| DELETE | `/api/v1/quotas/{id}` | Soft-delete quota | `handleDeleteQuota` | `TestDeleteQuota`, `TestDeleteQuota_NotFound` |
 | GET | `/api/v1/reports/costs` | Cost report (JSON/CSV, group by tenant/type/meter/resource/project/user) | `handleCostReport` | `TestCostReport_GroupByTenant`, `TestCostReport_DailyResolution`, `TestCostReport_FromToParams`, `TestCostReport_CSV` |
 | GET | `/api/v1/reports/breakdown` | Per-resource cost line items (JSON/CSV) | `handleCostBreakdown` | `TestCostBreakdown`, `TestCostBreakdown_CSV` |
 | GET | `/api/v1/reports/summary` | Pipeline health counts | `handlePipelineSummary` | — |
@@ -139,7 +143,7 @@ On success, the event is processed through:
 
 ## GET /api/v1/quotas/{tenant_id}
 
-Returns quota consumption status for a tenant in the current monthly period.
+Returns quota consumption status for a tenant. Each quota uses its own period (monthly, daily, Nh, Nd) and thresholds.
 
 **Handler:** [`handleQuotaStatus`](../inventory-watcher/internal/ingest/handler.go)
 
@@ -223,12 +227,12 @@ Returns quota consumption status for a tenant in the current monthly period.
 | `quotas[].consumed` | number | Current consumption (SUM of metering_entries) |
 | `quotas[].percentage` | number | `consumed / limit × 100`, rounded to 2 decimals |
 | `quotas[].thresholds` | object | Whether each threshold level has been reached |
-| `quotas[].thresholds["50"]` | boolean | True if consumption ≥ 50% of limit |
-| `quotas[].thresholds["70"]` | boolean | True if consumption ≥ 70% of limit |
-| `quotas[].thresholds["90"]` | boolean | True if consumption ≥ 90% of limit |
-| `quotas[].thresholds["100"]` | boolean | True if consumption ≥ 100% of limit |
+| `quotas[].thresholds["50"]` | boolean | True if consumption ≥ 50% of limit (configurable per quota; defaults to 50, 70, 90, 100 if not set) |
+| `quotas[].thresholds["70"]` | boolean | True if consumption ≥ 70% of limit (configurable per quota; defaults to 50, 70, 90, 100 if not set) |
+| `quotas[].thresholds["90"]` | boolean | True if consumption ≥ 90% of limit (configurable per quota; defaults to 50, 70, 90, 100 if not set) |
+| `quotas[].thresholds["100"]` | boolean | True if consumption ≥ 100% of limit (configurable per quota; defaults to 50, 70, 90, 100 if not set) |
 | `quotas[].alerts` | array | Threshold alerts fired for this meter in this period (omitted if none) |
-| `quotas[].alerts[].threshold_pct` | number | Threshold level that was crossed (50, 70, 90, or 100) |
+| `quotas[].alerts[].threshold_pct` | number | Threshold level that was crossed (configurable per quota; defaults to 50, 70, 90, 100 if not set) |
 | `quotas[].alerts[].consumed` | number | Consumption at the time the alert fired |
 | `quotas[].alerts[].limit_value` | number | Quota limit at the time the alert fired |
 | `quotas[].alerts[].period` | string | Billing period (`YYYY-MM`) |
