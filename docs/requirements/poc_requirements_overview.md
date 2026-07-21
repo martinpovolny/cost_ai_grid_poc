@@ -319,13 +319,11 @@ Send threshold notifications from RHCM to OSAC when cost/quota consumption hits 
 ### REQ-14: Wallets (Prepaid Balance)
 **Priority:** HIGH &nbsp;·&nbsp; [COST-7939](https://redhat.atlassian.net/browse/COST-7939) &nbsp;·&nbsp; **Rank:** 19
 
+**AI Grid MB-005 requirement**
 
-**Source:** AI Grid MB-005 requirement.
-```
-A single enterprise profile must be capable of processing hybrid funding structures,
-concurrently tracking postpaid monthly corporate invoices alongside dedicated prepaid
-wallets for experimental teams.
-```
+1. Concurrent Wallet Capabilities: A single enterprise profile must be capable of processing hybrid funding structures, concurrently tracking postpaid monthly corporate invoices alongside dedicated prepaid wallets for experimental teams.
+2. SLA Multipliers: The platform must apply real-time cost scaling factor adjustments based on the achieved latency tier.
+
 
 Support prepaid wallets so service providers can move from post-payment to pre-payment. Customers top up a wallet with a monetary amount; metered spend is deducted from that balance. When remaining funds fall below a configurable threshold (e.g. less than X% of the topped-up amount), alerts are sent.
 
@@ -367,9 +365,12 @@ Wallets therefore need an explicit prepaid-balance concept (this requirement), e
 - **Payment capture / reserved allocations / billing multipliers:** OUT of Cost — external billing system (Lago/Zuora/etc.)
 
 **Open Questions:**
+- Can projects share a tenant wallet?
 - Who owns top-up UX (not payment capture) — OSAC console vs billing console? Cost exposes API only for PoC
+- On zero/insufficient balance: does Cost only report status (like REQ-9), or must it participate in hard stop of provisioning/inference (enforcement still expected to be OSAC's)?
 - Exact `% of topped-up amount` denominator — cumulative top-ups vs last top-up vs reset-on-deplete (see wallet spec §6.3)
 - Confirm “experimental team” always maps to OSAC project (vs a separate team dimension) — relevant when project wallets stretch lands
+- Relationship to reserved allocations / multipliers called out under MB-005 (those remain customer billing-system responsibilities per AI Grid notes)
 
 **Related:**
 - REQ-9 (Quota/Budget Status API) — complementary monetary controls; postpaid ceilings vs prepaid draw-down
