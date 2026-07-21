@@ -332,14 +332,18 @@ func SeedDefaultRates(ctx context.Context, store *inventory.Store, logger *slog.
 		return nil
 	}
 
+	freeTier1M := 1_000_000.0
+	freeTier20GiB := 20.0
+	paidTier120GiB := 120.0
+
 	now := time.Now().UTC()
 	defaults := []inventory.RateRecord{
 		{ResourceType: "compute_instance", MeterName: "vm_uptime_seconds", KokuMetric: "vm_cost_per_hour", CostType: "Infrastructure", PricePerUnit: 0.01 / 3600, Currency: "USD", EffectiveFrom: now},
 		{ResourceType: "compute_instance", MeterName: "vm_cpu_core_seconds", KokuMetric: "cpu_core_request_per_hour", CostType: "Supplementary", PricePerUnit: 0.005 / 3600, Currency: "USD", EffectiveFrom: now},
-		{ResourceType: "compute_instance", MeterName: "vm_memory_gib_seconds", KokuMetric: "memory_gb_request_per_hour", CostType: "Supplementary", PricePerUnit: 0.002 / 3600, Currency: "USD", EffectiveFrom: now},
+		{ResourceType: "compute_instance", MeterName: "vm_memory_gib_seconds", KokuMetric: "memory_gb_request_per_hour", CostType: "Supplementary", PricePerUnit: 0, Currency: "USD", TierMode: "cumulative", TierPeriod: "monthly", Tiers: []inventory.Tier{{UpTo: &freeTier20GiB, PricePerUnit: 0}, {UpTo: &paidTier120GiB, PricePerUnit: 0.08}, {UpTo: nil, PricePerUnit: 0.07}}, Description: "First 20 GiB free/month, then graduated", EffectiveFrom: now},
 		{ResourceType: "cluster", MeterName: "cluster_uptime_seconds", KokuMetric: "cluster_cost_per_hour", CostType: "Infrastructure", PricePerUnit: 0.50 / 3600, Currency: "USD", EffectiveFrom: now},
 		{ResourceType: "cluster", MeterName: "cluster_worker_node_seconds", KokuMetric: "node_cost_per_hour", CostType: "Infrastructure", PricePerUnit: 0.10 / 3600, Currency: "USD", EffectiveFrom: now},
-		{ResourceType: "model", MeterName: "maas_tokens_in", KokuMetric: "", CostType: "Supplementary", PricePerUnit: 0.50 / 1_000_000, Currency: "USD", Description: "Prompt/input tokens (includes cached)", EffectiveFrom: now},
+		{ResourceType: "model", MeterName: "maas_tokens_in", KokuMetric: "", CostType: "Supplementary", PricePerUnit: 0, Currency: "USD", TierMode: "cumulative", TierPeriod: "monthly", Tiers: []inventory.Tier{{UpTo: &freeTier1M, PricePerUnit: 0}, {UpTo: nil, PricePerUnit: 0.50 / 1_000_000}}, Description: "First 1M tokens free/month, then $0.50/M", EffectiveFrom: now},
 		{ResourceType: "model", MeterName: "maas_tokens_out", KokuMetric: "", CostType: "Supplementary", PricePerUnit: 1.50 / 1_000_000, Currency: "USD", Description: "Completion/output tokens (includes reasoning)", EffectiveFrom: now},
 		{ResourceType: "model", MeterName: "maas_requests", KokuMetric: "", CostType: "Supplementary", PricePerUnit: 5.00 / 1_000_000, Currency: "USD", EffectiveFrom: now},
 		{ResourceType: "bare_metal", MeterName: "bm_uptime_seconds", KokuMetric: "node_cost_per_hour", CostType: "Infrastructure", PricePerUnit: 0.05 / 3600, Currency: "USD", EffectiveFrom: now},

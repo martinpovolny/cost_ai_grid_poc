@@ -120,6 +120,85 @@ table, synced via the reconciler). This means:
 - With Option 1 (per-SKU pricing), this is irrelevant — cost comes
   from the uptime rate, not CPU/memory meters
 
+## Tiered Pricing
+
+### Per-event tiers (MaaS)
+
+Per-event tiers price each metering entry independently through the
+tier ladder. Useful for MaaS where a single API call can be large
+enough to cross tier boundaries.
+
+```sql
+INSERT INTO rates (resource_type, meter_name, cost_type, price_per_unit, currency, tiers)
+VALUES (
+  'model', 'maas_tokens_in', 'Supplementary', 0, 'USD',
+  '[{"up_to": 1000000, "price_per_unit": 0},
+    {"up_to": 10000000, "price_per_unit": 0.0000005},
+    {"up_to": null, "price_per_unit": 0.0000003}]'
+);
+```
+
+**Result:** Each request: first 1M tokens free, next 9M at $0.50/M,
+above 10M at $0.30/M. Each request starts fresh at tier 1.
+
+### Cumulative tiers (capacity and volume discounts)
+
+Cumulative tiers accumulate usage over a billing period. The tier
+position depends on how much the tenant has already consumed — not
+just the current entry.
+
+```sql
+INSERT INTO rates (resource_type, meter_name, cost_type, price_per_unit, currency,
+                   tier_mode, tier_period, tiers)
+VALUES (
+  'compute_instance', 'vm_memory_gib_seconds', 'Supplementary', 0, 'USD',
+  'cumulative', 'monthly',
+  '[{"up_to": 20, "price_per_unit": 0},
+    {"up_to": 120, "price_per_unit": 0.08},
+    {"up_to": null, "price_per_unit": 0.07}]'
+);
+```
+
+**Result:** Per month: first 20 GiB free, 20–120 GiB at $0.08,
+above 120 GiB at $0.07. A tenant using 200 GiB/month pays $13.60.
+
+**Key fields:**
+- `tier_mode` = `"cumulative"` — accumulate over the period (default
+  `"per_event"` for backwards compatibility)
+- `tier_period` — the accumulation window (default `""` = monthly)
+
+### Windowed MaaS tiers
+
+Use `tier_mode="cumulative"` with a short `tier_period` for
+time-windowed free-then-paid bands:
+
+```sql
+INSERT INTO rates (resource_type, meter_name, cost_type, price_per_unit, currency,
+                   tier_mode, tier_period, tiers)
+VALUES (
+  'model', 'maas_tokens_in', 'Supplementary', 0, 'USD',
+  'cumulative', '5h',
+  '[{"up_to": 1000000, "price_per_unit": 0},
+    {"up_to": null, "price_per_unit": 0.00001}]'
+);
+```
+
+**Result:** Every 5 hours: first 1M tokens free, then $10/M. The
+window resets at the next 5h boundary (anchored to midnight UTC).
+
+## Billing Periods
+
+The `tier_period` field on rates and the `period` field on quotas
+accept these values:
+
+| Value | Window | Anchored to |
+|-------|--------|-------------|
+| `"monthly"` (default) | Calendar month | 1st of month 00:00 UTC |
+| `"weekly"` | ISO week | Monday 00:00 UTC |
+| `"daily"` | Calendar day | 00:00 UTC |
+| `"Nh"` (e.g. `"5h"`, `"8h"`) | N-hour slots | Midnight UTC; last slot truncated if N doesn't divide 24 |
+| `"Nd"` (e.g. `"7d"`, `"10d"`) | N-day slots | 1st of month; last slot truncated if N doesn't divide the month |
+
 ## Rate Table Schema
 
 ```
@@ -133,7 +212,9 @@ rates
 ├── cost_type       TEXT          -- Infrastructure or Supplementary
 ├── price_per_unit  NUMERIC       -- per unit (seconds, tokens, etc.)
 ├── currency        TEXT          -- USD
-├── tiers           JSONB         -- tiered pricing (optional)
+├── tiers           JSONB         -- tiered pricing bands (optional)
+├── tier_mode       TEXT          -- "per_event" (default) or "cumulative"
+├── tier_period     TEXT          -- accumulation window: "", "monthly", "5h", "7d", etc.
 ├── description     TEXT
 ├── effective_from  TIMESTAMPTZ
 └── effective_to    TIMESTAMPTZ   -- NULL = no expiry
