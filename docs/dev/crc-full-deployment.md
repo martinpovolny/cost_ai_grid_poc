@@ -175,12 +175,12 @@ helm upgrade cnpg oci://ghcr.io/cloudnative-pg/charts/cloudnative-pg \
 oc create secret generic -n postgres osac-keycloak-credentials \
   --type=kubernetes.io/basic-auth \
   --from-literal=username=keycloak \
-  --from-literal=password="$(openssl rand -base64 18)"
+  --from-literal=password="$(openssl rand -hex 18)"
 
 oc create secret generic -n postgres osac-service-credentials \
   --type=kubernetes.io/basic-auth \
   --from-literal=username=service \
-  --from-literal=password="$(openssl rand -base64 18)"
+  --from-literal=password="$(openssl rand -hex 18)"
 
 # Create TLS certificate
 oc apply -f - <<'EOF'
@@ -507,6 +507,8 @@ metadata:
   namespace: cost-mgmt
 type: Opaque
 stringData:
+  user: "user"
+  password: "pass"
   connection-url: "postgres://user:pass@cost-db:5432/costdb"
 ---
 apiVersion: v1
