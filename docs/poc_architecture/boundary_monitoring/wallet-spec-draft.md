@@ -501,6 +501,24 @@ Notes:
 
 ---
 
+## 10b. Implementation notes (Jul 22, 2026)
+
+PoC implementation covers P0–P5 (must-have phases). Known gaps
+relative to this spec:
+
+| Spec feature | Status | Notes |
+|---|---|---|
+| `active` / `closed` lifecycle | **Done** | Create sets `active`; no close API yet (deferred) |
+| `frozen` lifecycle state | **Not implemented** | Spec says "no deductions while frozen; costs queue" (§8, Q7) but does not define: (1) API to freeze/unfreeze (PATCH? transition endpoint?), (2) whether top-ups are accepted on a frozen wallet, (3) whether adjustments are accepted, (4) who can freeze (admin only? any API caller?). `DeductWallets` already skips non-`active` wallets, so the deduction side would work once the state can be set. **Needs product input before implementation.** |
+| `reversal` entry type | **Not implemented** | Listed in ledger schema (`entry_type: reversal`) but semantics are undefined. Is it "undo a specific prior ledger entry by reference" or just a negative adjustment with a different label? **Needs clarification.** |
+| Negative adjustments | **Done** (PR #95) | `AdjustWallet` modifies balance only (not `reference_balance`); signed amount; reason field for audit |
+| `created_by` on ledger | **Not implemented** | No auth in PoC = no actor to record. Trivial to add once auth lands. |
+| Project-scoped wallets (Option B) | **Deferred** | `project_id` column exists on `wallets`; deduction routing and scope resolution not built |
+| Push alerts for low balance | **Not implemented** | Threshold flags computed on status GET; push depends on REQ-10 unparking |
+| `idempotency_key` (separate from `external_ref`) | **Not implemented** | PoC uses `external_ref` only for idempotent top-ups |
+
+---
+
 ## 11. PoC implementation plan
 
 | Phase | Deliverable | Depends on | Priority |
