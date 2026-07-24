@@ -1434,16 +1434,13 @@ func (h *APIHandler) GetDebugDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(dashboardHTML))
 }
 
-// RegisterDebugRoutes adds the reports UI, debug dashboard, and root redirect.
-// These are not in the OpenAPI spec so they're registered separately.
+// RegisterDebugRoutes adds routes not covered by the OpenAPI spec:
+// /reports (manager UI) and / (redirect to /reports).
+// /debug/dashboard is already registered via HandlerFromMux (it's in server.gen.go).
 func (h *APIHandler) RegisterDebugRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /reports", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write([]byte(reportsHTML))
-	})
-	mux.HandleFunc("GET /debug/dashboard", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(dashboardHTML))
 	})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
