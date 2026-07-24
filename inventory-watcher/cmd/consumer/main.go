@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -90,6 +91,28 @@ func main() {
 		re := ruleengine.New(rulesDir)
 		rt.SetRuleEngine(re)
 		logger.Info("rule engine enabled", "rules_dir", rulesDir)
+
+		entries, _ := os.ReadDir(rulesDir)
+		for _, e := range entries {
+			if e.IsDir() || path.Ext(e.Name()) != ".json" {
+				continue
+			}
+			data, err := os.ReadFile(path.Join(rulesDir, e.Name()))
+			if err != nil {
+				logger.Warn("failed to read rule file for seeding", "file", e.Name(), "error", err)
+				continue
+			}
+			name := strings.TrimSuffix(e.Name(), ".json")
+			if err := store.UpsertPricingRule(ctx, name, data); err != nil {
+				logger.Warn("failed to seed pricing rule", "name", name, "error", err)
+			} else {
+				logger.Info("seeded pricing rule from file", "name", name)
+			}
+		}
+	} else {
+		re := ruleengine.NewFromStore(store)
+		rt.SetRuleEngine(re)
+		logger.Info("rule engine enabled", "source", "database")
 	}
 
 	var w *watcher.Watcher

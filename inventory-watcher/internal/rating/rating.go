@@ -69,6 +69,14 @@ func (r *Rater) sweep(ctx context.Context) {
 		return
 	}
 
+	if r.rules != nil {
+		if reloaded, err := r.rules.ReloadIfChanged(ctx); err != nil {
+			r.logger.Warn("rule engine reload check failed", "error", err)
+		} else if reloaded {
+			r.logger.Info("pricing rules reloaded from database")
+		}
+	}
+
 	rateIndex := buildRateIndex(allRates)
 
 	var costEntries []inventory.CostEntry

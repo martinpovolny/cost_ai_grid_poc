@@ -374,6 +374,15 @@ CREATE TABLE IF NOT EXISTS splunk_cursor (
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 INSERT INTO splunk_cursor (id, last_sent_id) VALUES (1, 0) ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS pricing_rules (
+    id         BIGSERIAL PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    rule_json  JSONB NOT NULL,
+    version    INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 `
 
 // InsertRawEvent appends an event to the immutable audit log.
@@ -2019,4 +2028,55 @@ func (s *Store) RawEventsSince(ctx context.Context, afterID int64, limit int) ([
 		results = append(results, r)
 	}
 	return results, rows.Err()
+}
+
+func (s *Store) UpsertPricingRule(ctx context.Context, name string, ruleJSON json.RawMessage) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO pricing_rules (name, rule_json)
+		VALUES ($1, $2)
+		ON CONFLICT (name) DO UPDATE SET
+			rule_json = EXCLUDED.rule_json,
+			version = pricing_rules.version + 1,
+			updated_at = NOW()
+	`, name, ruleJSON)
+	return err
+}
+
+func (s *Store) GetPricingRule(ctx context.Context, name string) (*PricingRule, error) {
+	var r PricingRule
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, name, rule_json, version, created_at, updated_at
+		FROM pricing_rules WHERE name = $1
+	`, name).Scan(&r.ID, &r.Name, &r.RuleJSON, &r.Version, &r.CreatedAt, &r.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+func (s *Store) AllPricingRules(ctx context.Context) ([]PricingRule, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, name, rule_json, version, created_at, updated_at
+		FROM pricing_rules ORDER BY name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rules []PricingRule
+	for rows.Next() {
+		var r PricingRule
+		if err := rows.Scan(&r.ID, &r.Name, &r.RuleJSON, &r.Version, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			return nil, err
+		}
+		rules = append(rules, r)
+	}
+	return rules, rows.Err()
+}
+
+func (s *Store) PricingRulesVersion(ctx context.Context) (int64, error) {
+	var v int64
+	err := s.pool.QueryRow(ctx, `SELECT COALESCE(SUM(version), 0) FROM pricing_rules`).Scan(&v)
+	return v, err
 }

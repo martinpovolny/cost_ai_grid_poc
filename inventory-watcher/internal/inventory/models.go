@@ -280,6 +280,15 @@ type WalletStatus struct {
 	Thresholds       map[string]bool `json:"thresholds"`
 }
 
+type PricingRule struct {
+	ID        int64           `json:"id"`
+	Name      string          `json:"name"`
+	RuleJSON  json.RawMessage `json:"rule_json"`
+	Version   int             `json:"version"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
 type PipelineSummary struct {
 	RawEvents       int `json:"raw_events"`
 	MeteringEntries int `json:"metering_entries"`
