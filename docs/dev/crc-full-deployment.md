@@ -640,11 +640,19 @@ unused namespaces first if needed:
 kubectl top nodes   # check — target < 75% memory before proceeding
 ```
 
-### 9a. Install Istio 1.29.2
+### 9a. Install Istio 1.29.6
 
 ```bash
-# Download istioctl
-curl -sL "https://github.com/istio/istio/releases/download/1.29.2/istioctl-1.29.2-osx-arm64.tar.gz" \
+# Download istioctl (auto-detects platform)
+ISTIO_VERSION=1.29.6
+case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64)   ISTIO_PLATFORM="linux-amd64" ;;
+  Linux-aarch64)  ISTIO_PLATFORM="linux-arm64" ;;
+  Darwin-arm64)   ISTIO_PLATFORM="osx-arm64" ;;
+  Darwin-x86_64)  ISTIO_PLATFORM="osx-amd64" ;;
+  *)              echo "Unsupported platform: $(uname -s)-$(uname -m)"; exit 1 ;;
+esac
+curl -sL "https://github.com/istio/istio/releases/download/${ISTIO_VERSION}/istioctl-${ISTIO_VERSION}-${ISTIO_PLATFORM}.tar.gz" \
   | tar xz -C /tmp
 
 # Install with OpenShift profile
