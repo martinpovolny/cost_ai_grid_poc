@@ -1433,13 +1433,15 @@ func (h *APIHandler) TriggerReconcile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "reconciliation triggered"})
 }
 
-// RegisterDebugRoutes adds the debug dashboard and root redirect to the mux.
-// These are not in the OpenAPI spec so they're registered separately.
+// GetDebugDashboard serves the built-in diagnostic dashboard (HTML).
+func (h *APIHandler) GetDebugDashboard(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(dashboardHTML))
+}
+
+// RegisterDebugRoutes adds the root redirect to the mux.
+// The dashboard itself is now in the OpenAPI spec and registered via HandlerFromMux.
 func (h *APIHandler) RegisterDebugRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /debug/dashboard", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(dashboardHTML))
-	})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
 			http.Redirect(w, r, "/debug/dashboard", http.StatusFound)
