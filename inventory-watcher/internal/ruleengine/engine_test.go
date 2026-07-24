@@ -1,12 +1,15 @@
 package ruleengine
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path"
 	"testing"
 
 	zen "github.com/gorules/zen-go"
+
+	"github.com/osac-project/cost-event-consumer/internal/inventory"
 )
 
 func loadRule(key string) ([]byte, error) {
@@ -265,5 +268,136 @@ func TestCUD_GlobexHighCommitment(t *testing.T) {
 	// within CUD 50% off: $0.40/hr × (1 - 50%) = $0.20/hr × 2hr = $0.40
 	if cost < 0.39 || cost > 0.41 {
 		t.Errorf("expected ~$0.40 (CUD 50%% off × 2hr), got $%.4f", cost)
+	}
+}
+
+// --- DB-backed engine tests ---
+
+type mockRuleStore struct {
+	rules   []inventory.PricingRule
+	version int64
+}
+
+func (m *mockRuleStore) PricingRulesVersion(_ context.Context) (int64, error) {
+	return m.version, nil
+}
+
+func (m *mockRuleStore) AllPricingRules(_ context.Context) ([]inventory.PricingRule, error) {
+	return m.rules, nil
+}
+
+func TestNewFromStore_LoadsRules(t *testing.T) {
+	ruleJSON, err := os.ReadFile(path.Join("..", "..", "rules", "compute-pricing.json"))
+	if err != nil {
+		t.Fatalf("read rule file: %v", err)
+	}
+
+	store := &mockRuleStore{
+		rules: []inventory.PricingRule{
+			{Name: "compute-pricing.json", RuleJSON: ruleJSON, Version: 1},
+		},
+		version: 1,
+	}
+
+	engine := NewFromStore(store)
+	defer engine.Close()
+
+	reloaded, err := engine.ReloadIfChanged(context.Background())
+	if err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+	if !reloaded {
+		t.Fatal("expected reload on first call")
+	}
+
+	output, err := engine.EvaluateRate("compute-pricing.json", PricingInput{
+		InstanceType: "standard-4-16",
+		TenantTier:   "bronze",
+		Value:        3600.0,
+	})
+	if err != nil {
+		t.Fatalf("evaluate failed: %v", err)
+	}
+
+	if output.CostAmount < 0.19 || output.CostAmount > 0.21 {
+		t.Errorf("expected ~$0.20, got $%.4f", output.CostAmount)
+	}
+}
+
+func TestReloadIfChanged_NoReloadWhenVersionUnchanged(t *testing.T) {
+	store := &mockRuleStore{version: 5}
+	engine := NewFromStore(store)
+	defer engine.Close()
+
+	engine.cachedVersion = 5
+
+	reloaded, err := engine.ReloadIfChanged(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reloaded {
+		t.Error("expected no reload when version unchanged")
+	}
+}
+
+func TestReloadIfChanged_ReloadsWhenVersionChanges(t *testing.T) {
+	ruleJSON, err := os.ReadFile(path.Join("..", "..", "rules", "compute-pricing.json"))
+	if err != nil {
+		t.Fatalf("read rule file: %v", err)
+	}
+
+	store := &mockRuleStore{
+		rules: []inventory.PricingRule{
+			{Name: "compute-pricing.json", RuleJSON: ruleJSON, Version: 2},
+		},
+		version: 2,
+	}
+
+	engine := NewFromStore(store)
+	defer engine.Close()
+
+	engine.cachedVersion = 1
+
+	reloaded, err := engine.ReloadIfChanged(context.Background())
+	if err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+	if !reloaded {
+		t.Error("expected reload when version changed")
+	}
+	if engine.cachedVersion != 2 {
+		t.Errorf("expected cachedVersion=2, got %d", engine.cachedVersion)
+	}
+}
+
+func TestNewFromStore_FileBased_NoReload(t *testing.T) {
+	engine := New(path.Join("..", "..", "rules"))
+	defer engine.Close()
+
+	reloaded, err := engine.ReloadIfChanged(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reloaded {
+		t.Error("file-based engine should never reload")
+	}
+}
+
+func TestHasRules(t *testing.T) {
+	store := &mockRuleStore{
+		rules:   []inventory.PricingRule{{Name: "test.json", RuleJSON: []byte("{}"), Version: 1}},
+		version: 1,
+	}
+	engine := NewFromStore(store)
+	defer engine.Close()
+
+	if engine.HasRules() {
+		t.Error("expected no rules before reload")
+	}
+
+	engine.ReloadIfChanged(context.Background())
+
+	if !engine.HasRules() {
+		t.Error("expected rules after reload")
 	}
 }
