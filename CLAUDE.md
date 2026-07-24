@@ -184,7 +184,7 @@ inventory-watcher/
     api/server.gen.go            Generated ServerInterface from OpenAPI spec (DO NOT EDIT)
     api/handler.go               HTTP API handlers implementing ServerInterface
     api/handler_test.go          API handler tests
-    ingest/handler.go            Legacy HTTP API (kept for reference, replaced by api/)
+    ingest/                      (removed — replaced by api/)
     custommetrics/custommetrics.go Config-driven metric extraction (REQ-13)
     config/config.go             Environment variable config
     metrics/metrics.go           Prometheus metric definitions

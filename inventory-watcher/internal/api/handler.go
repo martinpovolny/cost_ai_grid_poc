@@ -103,12 +103,7 @@ func isBudget(unit string) bool {
 	return false
 }
 
-func ptrStr(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
+
 
 // ---------------------------------------------------------------------------
 // Health probes
