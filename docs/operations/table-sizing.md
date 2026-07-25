@@ -195,7 +195,7 @@ Applying the policy from [table-lifecycle.md](table-lifecycle.md):
 
 | Lever | Effect | Trade-off |
 |-------|--------|-----------|
-| **Metering sweep interval** (default 45s) | Linear — 2× interval = 2× fewer rows | Coarser billing granularity; minimum viable is 1 min |
+| **Metering sweep interval** (default 45s) | Linear — 2× interval = 2× fewer rows | **SLA-constrained**: pipeline must produce a cost entry within 90s of a capacity event. Worst case = sweep interval + rating interval (45+20=65s, 25s headroom). Cannot exceed ~65s without breaching the SLA. |
 | **MaaS archival** (Splunk/S3) | Removes raw_events from PostgreSQL | Requires Splunk in prod |
 | **monthly_usage_summary rollup** | Reduces metering_entries hot window to 2 months | Loses per-event metering detail after 2 months |
 | **Partition metering_entries by month** | DROP PARTITION instead of DELETE | Schema change; recommended above 50M rows |
@@ -203,18 +203,38 @@ Applying the policy from [table-lifecycle.md](table-lifecycle.md):
 
 ---
 
-## Metering interval sensitivity
+## Metering interval and the 90-second SLA
 
-At 1,000 VMs, changing the metering sweep interval:
+The system has a hard requirement: a cost entry must exist within **90 seconds**
+of a capacity resource event (VM create, cluster start, etc.). The pipeline is:
 
-| Interval | metering_entries/year | Size/year |
-|----------|----------------------|-----------|
-| 45s (default) | 2.1 B rows | 906 GB |
-| 5 min | 315 M rows | 135 GB |
-| 15 min | 105 M rows | 45 GB |
-| 1 hour | 26 M rows | 11 GB |
+```
+Capacity event → metering sweep (≤ interval) → rating sweep (≤ 20s) → cost_entry
+Worst case latency = metering_interval + rating_interval
+```
 
-Monthly billing does not require 45s granularity. A 5-minute interval
-reduces storage 6.7× with identical billing accuracy for flat-rate meters.
-Cumulative tiered meters would see slightly different waterfall calculations
-but the difference is sub-cent per billing period.
+At 45s + 20s = **65s** — 25 seconds of headroom under the 90s SLA.
+
+This means the metering interval **cannot be increased freely**. The maximum
+viable interval keeping 10s of headroom is:
+
+```
+max_metering_interval = 90s - rating_interval - 10s_headroom
+                      = 90 - 20 - 10 = 60s
+```
+
+Storage sensitivity at 1,000 VMs (for reference — within SLA constraints):
+
+| Interval | Within 90s SLA? | metering_entries/year | Size/year |
+|----------|-----------------|-----------------------|-----------|
+| 45s (current) | ✓ 25s headroom | 2.1 B rows | 906 GB |
+| 60s (max) | ✓ 10s headroom | 1.6 B rows | 680 GB |
+| 5 min | ✗ violates SLA | 315 M rows | 135 GB |
+| 15 min | ✗ violates SLA | 105 M rows | 45 GB |
+
+**The metering interval is effectively fixed at 45–60s.** Storage growth from
+capacity billing is a function of fleet size, not a tunable parameter.
+
+> **Note for MaaS events:** MaaS metering is inline (no sweep involved), so
+> the 90s SLA for MaaS is driven solely by the rating interval (≤20s). MaaS
+> storage growth is independent of the metering interval.
