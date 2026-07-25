@@ -122,6 +122,33 @@ var (
 	})
 )
 
+// DB sizing metrics (updated each metering sweep).
+var (
+	DBTableRows = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Name:      "db_table_rows_total",
+		Help:      "Approximate live row count per table (from pg_stat_user_tables).",
+	}, []string{"table"})
+
+	DBTableBytes = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Name:      "db_table_size_bytes",
+		Help:      "On-disk size of each table in bytes (pg_relation_size, excludes indexes).",
+	}, []string{"table"})
+
+	UnratedMeteringEntries = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Name:      "unrated_metering_entries",
+		Help:      "Metering entries not yet processed by the rating sweep (queue depth).",
+	})
+
+	PipelineLagSeconds = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Name:      "pipeline_lag_seconds",
+		Help:      "Age in seconds of the oldest unrated metering entry. Zero when queue is empty.",
+	})
+)
+
 // Splunk forwarder metrics.
 var (
 	SplunkForwardTotal = promauto.NewCounter(prometheus.CounterOpts{
