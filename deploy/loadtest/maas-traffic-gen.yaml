@@ -43,6 +43,11 @@ spec:
                 configMapKeyRef:
                   name: loadtest-config
                   key: MAAS_WORKERS
+            - name: CONSUMER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cost-consumer-secrets
+                  key: osac-token
           resources:
             requests:
               cpu: 100m

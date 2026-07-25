@@ -83,6 +83,7 @@ func main() {
 	format := flag.String("format", "ipp", "event format: ipp (real) or legacy (old mock)")
 	loop := flag.Bool("loop", false, "run continuously at the specified rate forever (ignores -count)")
 	duration := flag.Duration("duration", 0, "stop after this long (works with both normal and -loop mode; 0 = no limit)")
+	token := flag.String("token", os.Getenv("CONSUMER_TOKEN"), "Bearer token for authenticated ingest endpoint (env: CONSUMER_TOKEN)")
 	flag.Parse()
 
 	fmt.Printf("MaaS Simulator\n")
@@ -138,7 +139,12 @@ func main() {
 			defer wg.Done()
 			for ce := range ch {
 				body, _ := json.Marshal(ce)
-				resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+				req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				if *token != "" {
+					req.Header.Set("Authorization", "Bearer "+*token)
+				}
+				resp, err := client.Do(req)
 				if err != nil {
 					errCount.Add(1)
 					continue
