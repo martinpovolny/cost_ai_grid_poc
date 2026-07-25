@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: osac-traffic-gen
+  namespace: cost-mgmt
+  labels:
+    app: osac-traffic-gen
+    component: loadtest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: osac-traffic-gen
+  template:
+    metadata:
+      labels:
+        app: osac-traffic-gen
+        component: loadtest
+    spec:
+      containers:
+        - name: osac-traffic-gen
+          image: quay.io/martin_povolny/cost-event-consumer:latest
+          imagePullPolicy: Always
+          command:
+            - osac-simulator
+            - -target
+            - http://osac-rest.osac.svc:8000
+            - -rate
+            - $(OSAC_RATE)
+            - -workers
+            - $(OSAC_WORKERS)
+            - -vm-count
+            - $(OSAC_VM_COUNT)
+          env:
+            - name: OSAC_RATE
+              valueFrom:
+                configMapKeyRef:
+                  name: loadtest-config
+                  key: OSAC_RATE
+            - name: OSAC_WORKERS
+              valueFrom:
+                configMapKeyRef:
+                  name: loadtest-config
+                  key: OSAC_WORKERS
+            - name: OSAC_VM_COUNT
+              valueFrom:
+                configMapKeyRef:
+                  name: loadtest-config
+                  key: OSAC_VM_COUNT
+            - name: OSAC_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cost-consumer-secrets
+                  key: osac-token
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi

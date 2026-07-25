@@ -58,6 +58,17 @@ func (m *Meter) sweep(ctx context.Context) {
 	m.meterClusters(ctx, now)
 	m.meterBareMetalInstances(ctx, now)
 
+	// Update DB sizing metrics.
+	sizing := m.store.GetSizingStats(ctx)
+	for table, rows := range sizing.TableRows {
+		metrics.DBTableRows.WithLabelValues(table).Set(float64(rows))
+	}
+	for table, bytes := range sizing.TableBytes {
+		metrics.DBTableBytes.WithLabelValues(table).Set(float64(bytes))
+	}
+	metrics.UnratedMeteringEntries.Set(float64(sizing.UnratedEntries))
+	metrics.PipelineLagSeconds.Set(sizing.PipelineLagSeconds)
+
 	metrics.MeteringSweepDuration.Observe(time.Since(start).Seconds())
 }
 

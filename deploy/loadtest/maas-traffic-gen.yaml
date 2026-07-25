@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maas-traffic-gen
+  namespace: cost-mgmt
+  labels:
+    app: maas-traffic-gen
+    component: loadtest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: maas-traffic-gen
+  template:
+    metadata:
+      labels:
+        app: maas-traffic-gen
+        component: loadtest
+    spec:
+      containers:
+        - name: maas-traffic-gen
+          image: quay.io/martin_povolny/cost-event-consumer:latest
+          imagePullPolicy: Always
+          command:
+            - maas-simulator
+            - -target
+            - http://cost-event-consumer.cost-mgmt.svc:8020
+            - -loop
+            - -rate
+            - $(MAAS_RATE)
+            - -workers
+            - $(MAAS_WORKERS)
+            - -format
+            - ipp
+          env:
+            - name: MAAS_RATE
+              valueFrom:
+                configMapKeyRef:
+                  name: loadtest-config
+                  key: MAAS_RATE
+            - name: MAAS_WORKERS
+              valueFrom:
+                configMapKeyRef:
+                  name: loadtest-config
+                  key: MAAS_WORKERS
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi

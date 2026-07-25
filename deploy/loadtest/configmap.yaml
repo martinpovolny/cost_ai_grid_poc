@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loadtest-config
+  namespace: cost-mgmt
+data:
+  MAAS_RATE: "50"       # events/sec per pod
+  MAAS_WORKERS: "8"
+  OSAC_RATE: "1"        # VM lifecycle ops/sec
+  OSAC_VM_COUNT: "10"   # target live VM pool size
+  OSAC_WORKERS: "4"
