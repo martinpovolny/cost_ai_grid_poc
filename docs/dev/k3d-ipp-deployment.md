@@ -339,7 +339,7 @@ kubectl exec -n ai-gateway test-client -c test-client -- \
 1. LLM response returned (echo from llm-katan)
 2. IPP logs: "metering check passed" + "processing response body complete"
 3. Consumer logs: `GET /customers/test-user/entitlements/inference-tokens/value` (balance check)
-4. Consumer logs: `POST /api/v1/events` status 202 (CloudEvent received)
+4. Consumer logs: `POST /api/v1/events` status 204 (CloudEvent received)
 5. Consumer logs: "stored raw event" + "metered MaaS event" (tokens_in, tokens_out)
 
 ## Verified Results (2026-07-04)
@@ -369,19 +369,17 @@ GET /api/v1/customers/test-user/entitlements/inference-tokens/value → 200 (3ms
 stored raw event: evt-556bdc33... type=inference.tokens.used resource=Model
 upserted model: test-model state=MODEL_STATE_RUNNING
 metered MaaS event: tokens_in=2 tokens_out=10 requests=0
-POST /api/v1/events → 202 (10ms)
+POST /api/v1/events → 204 (10ms)
 ```
 
 ## Known Issues
 
-### IPP expects 200/204, we return 202
+### ~~IPP expects 200/204, we return 202~~ — resolved
 
-The IPP client logs `"failed to report usage to metering system:
-usage report returned status 202"` but the event IS received and
-processed. The IPP `client.go` considers only 200 and 204 as success.
-
-**Fix:** Change our handler to return 200 instead of 202, or the IPP
-team to accept 202.
+The handler now returns **204 No Content**, matching the OpenAPI spec and
+the IPP client's success criteria (200 or 204). This was fixed during
+the oapi-codegen migration. `maas-simulator` was updated accordingly to
+check for 204 (commit `7a8e201`).
 
 Source: [client.go reportUsage](https://github.com/opendatahub-io/ai-gateway-payload-processing/blob/61b6160/pkg/plugins/external-metering/client.go)
 
