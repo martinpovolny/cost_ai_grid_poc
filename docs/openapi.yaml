@@ -172,7 +172,11 @@ paths:
                 duration_ms: 1200
       responses:
         "204":
-          description: Event accepted and processed
+          description: >-
+            Event accepted and queued for processing. Returns 204 (not 202)
+            because the IPP external-metering client only accepts 200 or 204
+            as success; 202 would be more semantically accurate for async
+            processing but is rejected by the IPP client.
         "400":
           description: >-
             Invalid JSON, missing required fields (`id`, `type`), or
