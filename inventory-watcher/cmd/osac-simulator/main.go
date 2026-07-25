@@ -57,7 +57,7 @@ func doRequest(client *http.Client, method, url, token string, body interface{})
 	}
 
 	var r apiResp
-	json.Unmarshal(data, &r) // best-effort; DELETE/PATCH may return no body
+	_ = json.Unmarshal(data, &r) // best-effort; DELETE/PATCH may return no body
 	return r.ID, nil
 }
 
