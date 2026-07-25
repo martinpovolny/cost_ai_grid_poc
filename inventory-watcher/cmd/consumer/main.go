@@ -83,7 +83,7 @@ func main() {
 	}
 
 	m := metering.New(store, cfg.MeteringInterval, logger)
-	rt := rating.New(store, cfg.RatingInterval, logger)
+	rt := rating.New(store, cfg.RatingInterval, cfg.RatingBatchSize, logger)
 
 	var w *watcher.Watcher
 	var r *reconciler.Reconciler

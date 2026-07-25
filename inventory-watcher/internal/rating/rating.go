@@ -22,8 +22,11 @@ type Rater struct {
 	logger   *slog.Logger
 }
 
-func New(store *inventory.Store, interval time.Duration, logger *slog.Logger) *Rater {
-	return &Rater{store: store, interval: interval, batch: 500, logger: logger}
+func New(store *inventory.Store, interval time.Duration, batchSize int, logger *slog.Logger) *Rater {
+	if batchSize <= 0 {
+		batchSize = 2000
+	}
+	return &Rater{store: store, interval: interval, batch: batchSize, logger: logger}
 }
 
 func (r *Rater) Run(ctx context.Context) error {
@@ -42,19 +45,15 @@ func (r *Rater) Run(ctx context.Context) error {
 
 func (r *Rater) sweep(ctx context.Context) {
 	start := time.Now()
+	totalRated, totalSkipped := 0, 0
 
-	entries, err := r.store.UnratedMeteringEntries(ctx, r.batch)
-	if err != nil {
-		r.logger.Error("failed to fetch unrated entries", "error", err)
-		metrics.RatingSweepErrors.Inc()
-		return
-	}
-
-	if len(entries) == 0 {
-		r.evaluateThresholds(ctx)
-		return
-	}
-
+	// Loop until the unrated queue is drained. This prevents the ticker
+	// interval from acting as a throughput cap: at 500 entries/20s = 25/s,
+	// the rater falls behind any sustained load above that. Now each tick
+	// processes as many batches as needed to clear the backlog.
+	//
+	// Housekeeping (threshold evaluation, wallet deduction) runs only after
+	// the queue is empty to avoid adding latency mid-backlog.
 	now := time.Now().UTC()
 	allRates, err := r.store.AllActiveRates(ctx, now)
 	if err != nil {
@@ -62,86 +61,113 @@ func (r *Rater) sweep(ctx context.Context) {
 		metrics.RatingSweepErrors.Inc()
 		return
 	}
-
 	rateIndex := buildRateIndex(allRates)
 
-	var costEntries []inventory.CostEntry
-	var ratedIDs []int64
-	skipped := 0
-	skippedMeters := make(map[string]bool)
-
-	type accumKey struct{ tenant, meter, period string }
-	priorUsageCache := make(map[accumKey]float64)
-
-	for _, me := range entries {
-		rate := matchRate(rateIndex, me.TenantID, me.InstanceType, me.ResourceType, me.MeterName)
-		if rate == nil {
-			skipped++
-			ratedIDs = append(ratedIDs, me.ID)
-			key := me.ResourceType + "/" + me.MeterName
-			if !skippedMeters[key] {
-				r.logger.Warn("no rate found for meter", "resource_type", me.ResourceType, "meter_name", me.MeterName)
-				skippedMeters[key] = true
-			}
-			metrics.MeteringEntriesSkippedNoRate.WithLabelValues(me.ResourceType, me.MeterName).Inc()
-			continue
-		}
-
-		var cost decimal.Decimal
-		if len(rate.Tiers) > 0 && rate.TierMode == "cumulative" {
-			period := rate.TierPeriod
-			if period == "" {
-				period = "monthly"
-			}
-			periodStart, periodEnd, err := billing.ResolvePeriod(period, me.PeriodEnd)
-			if err != nil {
-				r.logger.Warn("invalid tier_period", "period", period, "error", err)
-				cost = ApplyRate(me.Value, *rate)
-			} else {
-				ak := accumKey{me.TenantID, me.MeterName, billing.PeriodLabel(period, me.PeriodEnd)}
-				prior, cached := priorUsageCache[ak]
-				if !cached {
-					prior, _ = r.store.MeteringSumBefore(ctx, me.TenantID, me.MeterName, periodStart, periodEnd, me.ID)
-					priorUsageCache[ak] = prior
-				}
-				cost = ApplyRateCumulative(me.Value, prior, *rate)
-				priorUsageCache[ak] = prior + me.Value
-			}
-		} else {
-			cost = ApplyRate(me.Value, *rate)
-		}
-		costEntries = append(costEntries, inventory.CostEntry{
-			MeteringEntryID: me.ID,
-			RateID:          rate.ID,
-			TenantID:        me.TenantID,
-			ProjectID:       me.ProjectID,
-			UserID:          me.UserID,
-			ResourceType:    me.ResourceType,
-			ResourceID:      me.ResourceID,
-			MeterName:       me.MeterName,
-			MeteredValue:    me.Value,
-			CostAmount:      cost,
-			Currency:        rate.Currency,
-			PeriodStart:     me.PeriodStart,
-			PeriodEnd:       me.PeriodEnd,
-		})
-		ratedIDs = append(ratedIDs, me.ID)
-		metrics.CostEntriesCreated.WithLabelValues(me.ResourceType, rate.CostType).Inc()
-	}
-
-	if len(costEntries) > 0 {
-		if err := r.store.InsertCostEntryBatch(ctx, costEntries); err != nil {
-			r.logger.Error("failed to batch insert cost entries", "count", len(costEntries), "error", err)
+	for {
+		if ctx.Err() != nil {
 			return
 		}
-		if err := r.store.MarkMeteringEntriesRated(ctx, ratedIDs); err != nil {
-			r.logger.Error("failed to mark entries rated", "count", len(ratedIDs), "error", err)
+
+		entries, err := r.store.UnratedMeteringEntries(ctx, r.batch)
+		if err != nil {
+			r.logger.Error("failed to fetch unrated entries", "error", err)
+			metrics.RatingSweepErrors.Inc()
+			break
+		}
+		if len(entries) == 0 {
+			break // queue empty
+		}
+
+		type accumKey struct{ tenant, meter, period string }
+		priorUsageCache := make(map[accumKey]float64)
+		skippedMeters := make(map[string]bool)
+
+		var costEntries []inventory.CostEntry
+		var ratedIDs []int64
+
+		for _, me := range entries {
+			rate := matchRate(rateIndex, me.TenantID, me.InstanceType, me.ResourceType, me.MeterName)
+			if rate == nil {
+				totalSkipped++
+				ratedIDs = append(ratedIDs, me.ID)
+				key := me.ResourceType + "/" + me.MeterName
+				if !skippedMeters[key] {
+					r.logger.Warn("no rate found for meter", "resource_type", me.ResourceType, "meter_name", me.MeterName)
+					skippedMeters[key] = true
+				}
+				metrics.MeteringEntriesSkippedNoRate.WithLabelValues(me.ResourceType, me.MeterName).Inc()
+				continue
+			}
+
+			var cost decimal.Decimal
+			if len(rate.Tiers) > 0 && rate.TierMode == "cumulative" {
+				period := rate.TierPeriod
+				if period == "" {
+					period = "monthly"
+				}
+				periodStart, periodEnd, err := billing.ResolvePeriod(period, me.PeriodEnd)
+				if err != nil {
+					r.logger.Warn("invalid tier_period", "period", period, "error", err)
+					cost = ApplyRate(me.Value, *rate)
+				} else {
+					ak := accumKey{me.TenantID, me.MeterName, billing.PeriodLabel(period, me.PeriodEnd)}
+					prior, cached := priorUsageCache[ak]
+					if !cached {
+						prior, _ = r.store.MeteringSumBefore(ctx, me.TenantID, me.MeterName, periodStart, periodEnd, me.ID)
+						priorUsageCache[ak] = prior
+					}
+					cost = ApplyRateCumulative(me.Value, prior, *rate)
+					priorUsageCache[ak] = prior + me.Value
+				}
+			} else {
+				cost = ApplyRate(me.Value, *rate)
+			}
+
+			costEntries = append(costEntries, inventory.CostEntry{
+				MeteringEntryID: me.ID,
+				RateID:          rate.ID,
+				TenantID:        me.TenantID,
+				ProjectID:       me.ProjectID,
+				UserID:          me.UserID,
+				ResourceType:    me.ResourceType,
+				ResourceID:      me.ResourceID,
+				MeterName:       me.MeterName,
+				MeteredValue:    me.Value,
+				CostAmount:      cost,
+				Currency:        rate.Currency,
+				PeriodStart:     me.PeriodStart,
+				PeriodEnd:       me.PeriodEnd,
+			})
+			ratedIDs = append(ratedIDs, me.ID)
+			metrics.CostEntriesCreated.WithLabelValues(me.ResourceType, rate.CostType).Inc()
+		}
+
+		if len(costEntries) > 0 {
+			if err := r.store.InsertCostEntryBatch(ctx, costEntries); err != nil {
+				r.logger.Error("failed to batch insert cost entries", "count", len(costEntries), "error", err)
+				break
+			}
+		}
+		if len(ratedIDs) > 0 {
+			if err := r.store.MarkMeteringEntriesRated(ctx, ratedIDs); err != nil {
+				r.logger.Error("failed to mark entries rated", "count", len(ratedIDs), "error", err)
+			}
+		}
+
+		totalRated += len(costEntries)
+		totalSkipped += 0 // already counted above
+
+		// If we got fewer than a full batch, queue is now empty.
+		if len(entries) < r.batch {
+			break
 		}
 	}
 
-	r.logger.Info("rating sweep complete", "rated", len(costEntries), "skipped", skipped)
-	metrics.RatingSweepDuration.Observe(time.Since(start).Seconds())
+	elapsed := time.Since(start)
+	r.logger.Info("rating sweep complete", "rated", totalRated, "skipped", totalSkipped, "duration", elapsed.Round(time.Millisecond))
+	metrics.RatingSweepDuration.Observe(elapsed.Seconds())
 
+	// Housekeeping only when queue is clear — avoids adding latency mid-backlog.
 	r.evaluateThresholds(ctx)
 	r.DeductWallets(ctx)
 }
