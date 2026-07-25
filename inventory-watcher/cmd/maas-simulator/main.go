@@ -150,7 +150,7 @@ func main() {
 					continue
 				}
 				resp.Body.Close()
-				if resp.StatusCode == http.StatusAccepted {
+				if resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusNoContent {
 					sent.Add(1)
 				} else {
 					errCount.Add(1)
