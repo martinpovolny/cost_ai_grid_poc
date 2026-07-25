@@ -16,6 +16,7 @@ type Config struct {
 	ReconcileInterval  time.Duration
 	MeteringInterval   time.Duration
 	RatingInterval     time.Duration
+	RatingBatchSize    int
 	LogLevel           string
 	LogFormat               string
 	IngestListenAddr        string
@@ -110,6 +111,7 @@ func Load() *Config {
 		ReconcileInterval:  durationOrDefault("RECONCILE_INTERVAL", 1*time.Hour),
 		MeteringInterval:   durationOrDefault("METERING_INTERVAL", 45*time.Second),
 		RatingInterval:     durationOrDefault("RATING_INTERVAL", 20*time.Second),
+		RatingBatchSize:    intOrDefault("RATING_BATCH_SIZE", 2000),
 		LogLevel:           envOrDefault("LOG_LEVEL", "info"),
 		LogFormat:          envOrDefault("LOG_FORMAT", "text"),
 		IngestListenAddr:   os.Getenv("INGEST_LISTEN_ADDR"),
@@ -158,6 +160,16 @@ func (c *Config) Validate() error {
 func envOrDefault(key, defaultVal string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return defaultVal
+}
+
+func intOrDefault(key string, defaultVal int) int {
+	if v := os.Getenv(key); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+			return n
+		}
 	}
 	return defaultVal
 }

@@ -182,7 +182,7 @@ func TestSweep_SkipsAlreadyRated(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 
-	rater := New(testStore, 30*time.Second, testLogger)
+	rater := New(testStore, 30*time.Second, 500, testLogger)
 
 	rater.sweep(ctx)
 	var count1 int
@@ -214,7 +214,7 @@ func TestSweep_SkipsUnknownMeterName(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 
-	rater := New(testStore, 30*time.Second, testLogger)
+	rater := New(testStore, 30*time.Second, 500, testLogger)
 	rater.sweep(ctx)
 
 	var count int
@@ -259,7 +259,7 @@ func TestEvaluateThresholds_FiresAlerts(t *testing.T) {
 		t.Fatalf("insert metering: %v", err)
 	}
 
-	rater := New(testStore, 30*time.Second, testLogger)
+	rater := New(testStore, 30*time.Second, 500, testLogger)
 	rater.evaluateThresholds(ctx)
 
 	var alertCount int
@@ -305,7 +305,7 @@ func TestEvaluateThresholds_CustomLevels(t *testing.T) {
 		t.Fatalf("insert metering: %v", err)
 	}
 
-	rater := New(testStore, 30*time.Second, testLogger)
+	rater := New(testStore, 30*time.Second, 500, testLogger)
 	rater.evaluateThresholds(ctx)
 
 	// Should have fired 25% but not 75%
@@ -393,7 +393,7 @@ func TestSweep_CumulativeTiers(t *testing.T) {
 		}
 	}
 
-	rater := New(testStore, 30*time.Second, testLogger)
+	rater := New(testStore, 30*time.Second, 500, testLogger)
 	rater.batch = 10000
 	for i := 0; i < 5; i++ {
 		rater.sweep(ctx)
@@ -515,7 +515,7 @@ func TestSweep_CumulativeTiers_PerEventFallback(t *testing.T) {
 		}
 	}
 
-	rater := New(testStore, 30*time.Second, testLogger)
+	rater := New(testStore, 30*time.Second, 500, testLogger)
 	rater.batch = 10000
 	for i := 0; i < 3; i++ {
 		rater.sweep(ctx)
@@ -588,7 +588,7 @@ func TestSweep_CumulativeTiers_DifferentTenants(t *testing.T) {
 		t.Fatalf("insert B: %v", err)
 	}
 
-	rater := New(testStore, 30*time.Second, testLogger)
+	rater := New(testStore, 30*time.Second, 500, testLogger)
 	rater.batch = 10000
 	for i := 0; i < 3; i++ {
 		rater.sweep(ctx)
@@ -643,7 +643,7 @@ func TestEvaluateThresholds_MonetaryBudget(t *testing.T) {
 		PeriodStart: monthStart, PeriodEnd: now,
 	})
 
-	rater := New(testStore, 30*time.Second, testLogger)
+	rater := New(testStore, 30*time.Second, 500, testLogger)
 	rater.evaluateThresholds(ctx)
 
 	var alert50, alert70, alert90 int
