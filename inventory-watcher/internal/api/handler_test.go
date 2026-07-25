@@ -2083,7 +2083,7 @@ func TestWallet_DeductionViaRatingSweep(t *testing.T) {
 	})
 
 	// Run the deduction sweep
-	rater := rating.New(testStore, 30*time.Second, testLogger)
+	rater := rating.New(testStore, 30*time.Second, 2000, testLogger)
 	rater.DeductWallets(ctx)
 
 	// Check balance decreased

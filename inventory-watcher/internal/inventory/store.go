@@ -2006,3 +2006,63 @@ func (s *Store) RawEventsSince(ctx context.Context, afterID int64, limit int) ([
 	}
 	return results, rows.Err()
 }
+
+// SizingStats holds DB telemetry for Prometheus gauges.
+type SizingStats struct {
+	// TableRows maps table name → approximate live row count.
+	TableRows map[string]int64
+	// TableBytes maps table name → on-disk size in bytes (excludes indexes).
+	TableBytes map[string]int64
+	// UnratedEntries is the count of metering entries with rated_at IS NULL.
+	UnratedEntries int64
+	// PipelineLagSeconds is the age of the oldest unrated metering entry in seconds.
+	// Zero if there are no unrated entries.
+	PipelineLagSeconds float64
+}
+
+// GetSizingStats returns DB table sizing info and pipeline queue depth.
+// It runs three queries: pg_stat_user_tables for live rows + size, unrated
+// count, and oldest unrated age. Errors are logged and return zero values.
+func (s *Store) GetSizingStats(ctx context.Context) SizingStats {
+	stats := SizingStats{
+		TableRows:  make(map[string]int64),
+		TableBytes: make(map[string]int64),
+	}
+
+	const tables = `'raw_events','metering_entries','cost_entries','wallet_ledger_entries'`
+
+	// Table row counts and sizes from pg_stat_user_tables.
+	rows, err := s.pool.Query(ctx, `
+		SELECT relname, n_live_tup, pg_relation_size(relid)
+		FROM pg_stat_user_tables
+		WHERE relname IN (`+tables+`)`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			var liveTup, sizeBytes int64
+			if rows.Scan(&name, &liveTup, &sizeBytes) == nil {
+				stats.TableRows[name] = liveTup
+				stats.TableBytes[name] = sizeBytes
+			}
+		}
+	}
+
+	// Unrated queue depth.
+	if err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM metering_entries WHERE rated_at IS NULL`,
+	).Scan(&stats.UnratedEntries); err != nil {
+		stats.UnratedEntries = 0
+	}
+
+	// Pipeline lag: age of oldest unrated entry.
+	var lagSecs *float64
+	if err := s.pool.QueryRow(ctx, `
+		SELECT EXTRACT(EPOCH FROM (NOW() - MIN(period_start)))
+		FROM metering_entries WHERE rated_at IS NULL`,
+	).Scan(&lagSecs); err == nil && lagSecs != nil {
+		stats.PipelineLagSeconds = *lagSecs
+	}
+
+	return stats
+}
