@@ -1288,6 +1288,31 @@ paths:
                 splunk_token_set: false
                 splunk_index: ""
 
+  /reports:
+    get:
+      operationId: getReports
+      tags: [Operations]
+      summary: Manager-facing cost reports (HTML)
+      description: >-
+        Manager-facing cost reports UI rendered as a single-page HTML
+        application. Shows cost by organization, by resource type, and
+        quota status with period filtering and visual charts.
+
+
+        The page loads without authentication; API calls within the page
+        include a Bearer token stored in browser localStorage. A token
+        modal auto-opens on 401.
+
+
+        `GET /` redirects here.
+      responses:
+        "200":
+          description: Reports HTML page
+          content:
+            text/html:
+              schema:
+                type: string
+
   /debug/dashboard:
     get:
       operationId: getDebugDashboard
@@ -1300,8 +1325,7 @@ paths:
 
 
         **Availability:** Only registered when `DEBUG_DASHBOARD=true`
-        (default: enabled). When enabled, `GET /` redirects to
-        `/debug/dashboard`.
+        (default: enabled).
       responses:
         "200":
           description: Dashboard HTML page

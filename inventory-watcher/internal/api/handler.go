@@ -1428,18 +1428,24 @@ func (h *APIHandler) TriggerReconcile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "reconciliation triggered"})
 }
 
+// GetReports serves the manager-facing cost reports UI (HTML).
+func (h *APIHandler) GetReports(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(reportsHTML))
+}
+
 // GetDebugDashboard serves the built-in diagnostic dashboard (HTML).
 func (h *APIHandler) GetDebugDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(dashboardHTML))
 }
 
-// RegisterDebugRoutes adds the root redirect to the mux.
-// The dashboard itself is now in the OpenAPI spec and registered via HandlerFromMux.
+// RegisterDebugRoutes adds GET / (redirect to /reports).
+// /reports and /debug/dashboard are registered via HandlerFromMux (both in server.gen.go).
 func (h *APIHandler) RegisterDebugRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
-			http.Redirect(w, r, "/debug/dashboard", http.StatusFound)
+			http.Redirect(w, r, "/reports", http.StatusFound)
 		}
 	})
 }
