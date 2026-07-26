@@ -14,6 +14,8 @@ See `docs/operations/table-sizing.md` for the full scale analysis.
 | `idx_ce_period_tenant` — cross-tenant report seq scan | `8503dd5` |
 | `idx_ce_tenant_meter_period` — budget quota missing meter | `8503dd5` |
 | `idx_ce_unapplied` — wallet sweep partial index | `8503dd5` |
+| `idx_me_tenant_project_meter` — MeteringSumByProject heap filter | `e3f0545` |
+| DeductWallets N+1 — wallet_applied now in UnappliedCostEntries SELECT | `e3f0545` |
 
 ---
 
