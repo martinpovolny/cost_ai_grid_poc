@@ -138,4 +138,3 @@ pipeline is already wired.
 - [MaaS flow](../maas-flow.md)
 - [k3d IPP deployment guide](k3d-ipp-deployment.md)
 - [IPP stress test](ipp-stress-test-2026-07-05.md)
-- [Open questions 2026-07-07](../open-questions-2026-07-07.md) — Q1/Q2

@@ -98,7 +98,7 @@ func main() {
 			if e.IsDir() || path.Ext(e.Name()) != ".json" {
 				continue
 			}
-			data, err := os.ReadFile(path.Join(rulesDir, e.Name()))
+			data, err := os.ReadFile(path.Join(rulesDir, e.Name())) //nolint:gosec // G703: path from os.ReadDir, not user input
 			if err != nil {
 				logger.Warn("failed to read rule file for seeding", "file", e.Name(), "error", err)
 				continue
