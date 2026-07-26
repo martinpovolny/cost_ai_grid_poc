@@ -1,5 +1,65 @@
 # kube-cost-agent - AI Agent Guide
 
+## What This Is
+
+A lightweight Kubernetes controller that watches billable resources (Pods, Nodes,
+PVCs, LoadBalancer Services) and emits CloudEvents to the
+[cost-event-consumer](../inventory-watcher/) for metering and cost reporting.
+
+**Complementary to OSAC.** OSAC tracks provisioned capacity from the management
+plane (VMs, clusters, bare metal). This agent tracks what runs *inside* clusters.
+
+### Key files
+
+| File | Purpose |
+|------|---------|
+| `cmd/main.go` | Manager entry — wires emitter + controller, reads config |
+| `internal/controller/controller.go` | Watches Pods/Nodes/PVCs/Services via informers, emits CloudEvents |
+| `internal/emitter/emitter.go` | Batches CloudEvents, POSTs to cost-event-consumer with retry |
+| `internal/config/config.go` | Config from env vars (`CONSUMER_URL`, `CLUSTER_ID`, etc.) |
+| `config/manager/manager.yaml` | Deployment manifest — image, args, RBAC |
+| `config/configmap/kube-cost-agent-config.yaml` | ConfigMap for agent settings |
+
+### CloudEvent types emitted
+
+| Type | Trigger |
+|------|---------|
+| `kube.pod.lifecycle` | Pod ADDED / DELETED |
+| `kube.pod.heartbeat` | Every 60s for running pods |
+| `kube.node.lifecycle` | Node ADDED / DELETED |
+| `kube.node.heartbeat` | Every 5min per node |
+| `kube.pvc.lifecycle` | PVC ADDED / DELETED |
+| `kube.service.lifecycle` | LoadBalancer Service ADDED / DELETED |
+
+### Spot node detection (cloud labels checked)
+
+| Cloud / Offering | Label |
+|-----------------|-------|
+| AWS / ROSA / OSD | `node.kubernetes.io/lifecycle=spot` |
+| AWS + Karpenter | `karpenter.sh/capacity-type=spot` |
+| Azure / ARO | `kubernetes.azure.com/scalesetpriority=spot` |
+| GCP / OSD-GCP | `cloud.google.com/gke-spot=true` |
+
+### Key env vars (from ConfigMap / Deployment)
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `CONSUMER_URL` | — | `http://cost-event-consumer.cost-mgmt.svc:8020/api/v1/events` |
+| `CLUSTER_ID` | — | Cluster name embedded in CloudEvents |
+| `DEFAULT_TENANT` | `default` | Tenant when namespace has no `tenant` label |
+| `EXCLUDE_NAMESPACES` | `kube-system,...` | Skip system namespaces |
+| `HEARTBEAT_INTERVAL` | `60s` | Pod heartbeat frequency |
+| `NODE_RECONCILE_INTERVAL` | `5m` | Node snapshot frequency |
+
+### Billing model
+
+Charges are based on **resource requests** (not actual usage) — CPU millicore
+requests, memory request bytes, PVC provisioned capacity. This is deterministic
+and conservative: if a pod requests 500m CPU, it is billed for 500m regardless
+of actual consumption.
+
+---
+
 ## Project Structure
 
 **Single-group layout (default):**
