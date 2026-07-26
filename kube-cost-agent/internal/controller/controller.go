@@ -155,7 +155,7 @@ func (c *Controller) onPodAdd(obj any) {
 	data := c.podEventData(pod, "CREATED")
 	subject := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
 	c.emitter.Emit("kube.pod.lifecycle", subject, data)
-	c.logger.V(1).Info("Emitted Pod lifecycle event", fieldAction, "CREATED", "pod", subject)
+	c.logger.V(1).Info("Emitted Pod lifecycle event", "action", "CREATED", "pod", subject)
 }
 
 func (c *Controller) onPodDelete(obj any) {
@@ -177,7 +177,7 @@ func (c *Controller) onPodDelete(obj any) {
 	data := c.podEventData(pod, "DELETED")
 	subject := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
 	c.emitter.Emit("kube.pod.lifecycle", subject, data)
-	c.logger.V(1).Info("Emitted Pod lifecycle event", fieldAction, "DELETED", "pod", subject)
+	c.logger.V(1).Info("Emitted Pod lifecycle event", "action", "DELETED", "pod", subject)
 
 	// Clean up heartbeat tracking.
 	c.mu.Lock()
@@ -192,7 +192,7 @@ func (c *Controller) onNodeAdd(obj any) {
 	}
 	data := c.nodeEventData(node, "CREATED")
 	c.emitter.Emit("kube.node.lifecycle", node.Name, data)
-	c.logger.V(1).Info("Emitted Node lifecycle event", fieldAction, "CREATED", fieldNode, node.Name)
+	c.logger.V(1).Info("Emitted Node lifecycle event", "action", "CREATED", "node", node.Name)
 }
 
 func (c *Controller) onNodeDelete(obj any) {
@@ -361,11 +361,11 @@ func (c *Controller) emitPodHeartbeats(ctx context.Context) {
 		cpuReq, memReq := aggregateRequests(pod)
 
 		data := map[string]any{
-			fieldClusterID:       c.clusterID,
-			fieldTenant:           c.resolveTenant(pod.Namespace),
-			fieldNamespace:        pod.Namespace,
+			fieldClusterID:     c.clusterID,
+			fieldTenant:        c.resolveTenant(pod.Namespace),
+			fieldNamespace:     pod.Namespace,
 			"pod":              pod.Name,
-			fieldNode:             pod.Spec.NodeName,
+			fieldNode:          pod.Spec.NodeName,
 			"cpu_request":      cpuReq.AsApproximateFloat64(),
 			"memory_request":   memReq.Value(),
 			"duration_seconds": durationSec,
@@ -404,21 +404,21 @@ func (c *Controller) podEventData(pod *corev1.Pod, action string) map[string]any
 	ownerKind, ownerName := resolveOwner(pod)
 
 	return map[string]any{
-		fieldClusterID:  c.clusterID,
-		fieldTenant:      c.resolveTenant(pod.Namespace),
-		fieldAction:      action,
-		fieldNamespace:   pod.Namespace,
-		"pod":         pod.Name,
-		fieldNode:        pod.Spec.NodeName,
-		"cpu_request": cpuReq.AsApproximateFloat64(),
-		"cpu_limit":   cpuLim.AsApproximateFloat64(),
-		"mem_request": memReq.Value(),
-		"mem_limit":   memLim.Value(),
-		"gpu_count":   gpuCount,
-		"qos":         string(pod.Status.QOSClass),
-		"owner_kind":  ownerKind,
-		"owner_name":  ownerName,
-		fieldLabels:      pod.Labels,
+		fieldClusterID: c.clusterID,
+		fieldTenant:    c.resolveTenant(pod.Namespace),
+		fieldAction:    action,
+		fieldNamespace: pod.Namespace,
+		"pod":          pod.Name,
+		fieldNode:      pod.Spec.NodeName,
+		"cpu_request":  cpuReq.AsApproximateFloat64(),
+		"cpu_limit":    cpuLim.AsApproximateFloat64(),
+		"mem_request":  memReq.Value(),
+		"mem_limit":    memLim.Value(),
+		"gpu_count":    gpuCount,
+		"qos":          string(pod.Status.QOSClass),
+		"owner_kind":   ownerKind,
+		"owner_name":   ownerName,
+		fieldLabels:    pod.Labels,
 	}
 }
 
@@ -428,12 +428,21 @@ func (c *Controller) nodeEventData(node *corev1.Node, action string) map[string]
 	zone := labels["topology.kubernetes.io/zone"]
 	region := labels["topology.kubernetes.io/region"]
 
-	// Spot detection: check common labels used by cloud providers.
+	// Spot detection: check labels used by major cloud providers / OpenShift offerings.
+	// AWS/ROSA/OSD: node.kubernetes.io/lifecycle=spot (standard), karpenter.sh/capacity-type=spot
+	// ARO (Azure):  kubernetes.azure.com/scalesetpriority=spot
+	// GCP/OSD-GCP:  cloud.google.com/gke-spot=true
 	spot := false
 	if v, ok := labels["node.kubernetes.io/lifecycle"]; ok && v == fieldSpot {
 		spot = true
 	}
 	if v, ok := labels["karpenter.sh/capacity-type"]; ok && v == fieldSpot {
+		spot = true
+	}
+	if v, ok := labels["kubernetes.azure.com/scalesetpriority"]; ok && v == fieldSpot {
+		spot = true
+	}
+	if v, ok := labels["cloud.google.com/gke-spot"]; ok && v == "true" {
 		spot = true
 	}
 
@@ -454,16 +463,16 @@ func (c *Controller) nodeEventData(node *corev1.Node, action string) map[string]
 
 func (c *Controller) pvcEventData(pvc *corev1.PersistentVolumeClaim, action string) map[string]any {
 	data := map[string]any{
-		fieldClusterID:    c.clusterID,
-		fieldTenant:        c.resolveTenant(pvc.Namespace),
-		fieldAction:        action,
-		fieldNamespace:     pvc.Namespace,
+		fieldClusterID:  c.clusterID,
+		fieldTenant:     c.resolveTenant(pvc.Namespace),
+		fieldAction:     action,
+		fieldNamespace:  pvc.Namespace,
 		"pvc":           pvc.Name,
 		"storage_class": ptrString(pvc.Spec.StorageClassName),
 		"volume_name":   pvc.Spec.VolumeName,
 		"access_modes":  accessModesToStrings(pvc.Spec.AccessModes),
 		"phase":         string(pvc.Status.Phase),
-		fieldLabels:        pvc.Labels,
+		fieldLabels:     pvc.Labels,
 	}
 
 	// Requested storage size.
@@ -492,15 +501,15 @@ func (c *Controller) serviceEventData(svc *corev1.Service, action string) map[st
 	}
 
 	return map[string]any{
-		fieldClusterID:   c.clusterID,
-		fieldTenant:       c.resolveTenant(svc.Namespace),
-		fieldAction:       action,
-		fieldNamespace:    svc.Namespace,
+		fieldClusterID: c.clusterID,
+		fieldTenant:    c.resolveTenant(svc.Namespace),
+		fieldAction:    action,
+		fieldNamespace: svc.Namespace,
 		"service":      svc.Name,
 		"type":         string(svc.Spec.Type),
 		"lb_endpoints": lbIPs,
 		"ports":        servicePorts(svc),
-		fieldLabels:       svc.Labels,
+		fieldLabels:    svc.Labels,
 	}
 }
 
