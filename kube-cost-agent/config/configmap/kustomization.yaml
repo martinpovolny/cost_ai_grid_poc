@@ -1,0 +1,2 @@
+resources:
+- kube-cost-agent-config.yaml

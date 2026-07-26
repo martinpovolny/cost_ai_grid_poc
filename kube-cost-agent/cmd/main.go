@@ -34,6 +34,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+
+	agentconfig "github.com/myersCody/cost_ai_grid_poc/kube-cost-agent/internal/config"
+	"github.com/myersCody/cost_ai_grid_poc/kube-cost-agent/internal/controller"
+	"github.com/myersCody/cost_ai_grid_poc/kube-cost-agent/internal/emitter"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -175,6 +179,42 @@ func main() {
 	}
 
 	// +kubebuilder:scaffold:builder
+
+	// Load agent configuration from env vars / mounted ConfigMap.
+	cfg, err := agentconfig.Load()
+	if err != nil {
+		setupLog.Error(err, "Failed to load agent configuration")
+		os.Exit(1)
+	}
+	setupLog.Info("agent configured",
+		"consumer_url", cfg.ConsumerURL,
+		"cluster_id", cfg.ClusterID,
+		"heartbeat_interval", cfg.HeartbeatInterval,
+		"batch_size", cfg.BatchSize,
+	)
+
+	// Create the CloudEvent emitter.
+	em := emitter.New(
+		cfg.ConsumerURL, cfg.ConsumerToken, cfg.ClusterID,
+		cfg.BatchSize, cfg.BatchInterval,
+		ctrl.Log.WithName("emitter"),
+	)
+	if err := mgr.Add(em); err != nil {
+		setupLog.Error(err, "Failed to add emitter to manager")
+		os.Exit(1)
+	}
+
+	// Create the resource controller.
+	costController := controller.New(
+		mgr.GetCache(), em,
+		cfg.ClusterID, cfg.TenantID, cfg.ExcludeNamespaces,
+		cfg.HeartbeatInterval, cfg.NodeReconcileInterval,
+		ctrl.Log.WithName("controller"),
+	)
+	if err := mgr.Add(costController); err != nil {
+		setupLog.Error(err, "Failed to add controller to manager")
+		os.Exit(1)
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "Failed to set up health check")

@@ -65,6 +65,16 @@ spec:
           - --health-probe-bind-address=:8081
         image: quay.io/martin_povolny/kube-cost-agent:latest
         name: manager
+        envFrom:
+        - configMapRef:
+            name: kube-cost-agent-config
+        env:
+        - name: COST_CONSUMER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: kube-cost-agent-token
+              key: token
+              optional: true
         ports:
         - containerPort: 8081
           name: health
