@@ -11,8 +11,8 @@ cert-manager (cluster-wide)
   └─> Certificates
 
 CloudNativePG operator (postgres namespace)
-  └─> PostgreSQL cluster (2 replicas)
-      - osac-1, osac-2
+  └─> PostgreSQL cluster (1 instance)
+      - osac-1
       - keycloak DB (unused in simplified stack)
       - service DB (used by OSAC gRPC)
 
@@ -49,7 +49,7 @@ OSAC stack (osac namespace)
 | Component | Namespace | Service | Port |
 |-----------|-----------|---------|------|
 | PostgreSQL (primary) | postgres | osac-rw | 5432 |
-| PostgreSQL (read replicas) | postgres | osac-r, osac-ro | 5432 |
+| PostgreSQL (read replicas) | postgres | osac-r, osac-ro | 5432 | (unused with 1 instance) |
 | OSAC OIDC | osac | osac-oidc | 8013 (HTTPS) |
 | OSAC gRPC | osac | osac-grpc | 8010 |
 | OSAC REST | osac | osac-rest | 8000, 8012 (metrics) |

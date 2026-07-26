@@ -215,7 +215,7 @@ metadata:
   namespace: postgres
   name: osac
 spec:
-  instances: 2
+  instances: 1
   certificates:
     serverTLSSecret: osac-server-tls
     serverCASecret: osac-server-tls
