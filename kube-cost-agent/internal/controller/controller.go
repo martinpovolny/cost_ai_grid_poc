@@ -209,7 +209,7 @@ func (c *Controller) onNodeDelete(obj any) {
 	}
 	data := c.nodeEventData(node, "DELETED")
 	c.emitter.Emit("kube.node.lifecycle", node.Name, data)
-	c.logger.V(1).Info("Emitted Node lifecycle event", fieldAction, "DELETED", fieldNode, node.Name)
+	c.logger.V(1).Info("Emitted Node lifecycle event", "action", "DELETED", "node", node.Name)
 }
 
 func (c *Controller) onPVCAdd(obj any) {
@@ -223,7 +223,7 @@ func (c *Controller) onPVCAdd(obj any) {
 	data := c.pvcEventData(pvc, "CREATED")
 	subject := fmt.Sprintf("%s/%s", pvc.Namespace, pvc.Name)
 	c.emitter.Emit("kube.pvc.lifecycle", subject, data)
-	c.logger.V(1).Info("Emitted PVC lifecycle event", fieldAction, "CREATED", "pvc", subject)
+	c.logger.V(1).Info("Emitted PVC lifecycle event", "action", "CREATED", "pvc", subject)
 }
 
 func (c *Controller) onPVCDelete(obj any) {
@@ -244,7 +244,7 @@ func (c *Controller) onPVCDelete(obj any) {
 	data := c.pvcEventData(pvc, "DELETED")
 	subject := fmt.Sprintf("%s/%s", pvc.Namespace, pvc.Name)
 	c.emitter.Emit("kube.pvc.lifecycle", subject, data)
-	c.logger.V(1).Info("Emitted PVC lifecycle event", fieldAction, "DELETED", "pvc", subject)
+	c.logger.V(1).Info("Emitted PVC lifecycle event", "action", "DELETED", "pvc", subject)
 }
 
 func (c *Controller) onServiceAdd(obj any) {
@@ -261,7 +261,7 @@ func (c *Controller) onServiceAdd(obj any) {
 	data := c.serviceEventData(svc, "CREATED")
 	subject := fmt.Sprintf("%s/%s", svc.Namespace, svc.Name)
 	c.emitter.Emit("kube.service.lifecycle", subject, data)
-	c.logger.V(1).Info("Emitted Service lifecycle event", fieldAction, "CREATED", "service", subject)
+	c.logger.V(1).Info("Emitted Service lifecycle event", "action", "CREATED", "service", subject)
 }
 
 func (c *Controller) onServiceDelete(obj any) {
@@ -285,7 +285,7 @@ func (c *Controller) onServiceDelete(obj any) {
 	data := c.serviceEventData(svc, "DELETED")
 	subject := fmt.Sprintf("%s/%s", svc.Namespace, svc.Name)
 	c.emitter.Emit("kube.service.lifecycle", subject, data)
-	c.logger.V(1).Info("Emitted Service lifecycle event", fieldAction, "DELETED", "service", subject)
+	c.logger.V(1).Info("Emitted Service lifecycle event", "action", "DELETED", "service", subject)
 }
 
 // ---------------------------------------------------------------------------
