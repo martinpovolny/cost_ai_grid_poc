@@ -99,6 +99,24 @@ var (
 		Name:      "alerts_fired_total",
 		Help:      "Quota threshold alerts fired.",
 	}, []string{"threshold"})
+
+	// EventsRejectedTotal counts events rejected at ingest before storage.
+	// Labelled by reason: "timestamp_too_old", "timestamp_too_future".
+	EventsRejectedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "events_rejected_total",
+		Help:      "Ingest requests rejected before storage, by reason.",
+	}, []string{"reason"})
+
+	// EventsTimestampDriftTotal counts events accepted but with a clock drift
+	// beyond the warn threshold (default 30s). Direction: "past" or "future".
+	// Alert on sustained drift — it indicates a misconfigured source clock that
+	// could skew billing calculations even within the acceptance window.
+	EventsTimestampDriftTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "events_timestamp_drift_total",
+		Help:      "Accepted events whose timestamp drifted beyond the warn threshold.",
+	}, []string{"direction"})
 )
 
 // Resource gauges (updated each sweep).

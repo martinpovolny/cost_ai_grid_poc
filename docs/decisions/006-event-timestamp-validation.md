@@ -128,6 +128,27 @@ The following attack remains possible within the 2-hour window:
    (a VM that was running at 09:00 but whose event arrived at 11:00 would
    be billed from 11:00, not 09:00).
 
+## Observability
+
+Two new Prometheus metrics:
+
+| Metric | Labels | When incremented |
+|--------|--------|-----------------|
+| `cost_consumer_events_rejected_total` | `reason=timestamp_too_old` | Event `time` > 2h in the past — rejected with 400 |
+| `cost_consumer_events_rejected_total` | `reason=timestamp_too_future` | Event `time` > 5m in the future — rejected with 400 |
+| `cost_consumer_events_timestamp_drift_total` | `direction=past` | Accepted, but `time` > 30s in the past |
+| `cost_consumer_events_timestamp_drift_total` | `direction=future` | Accepted, but `time` > 30s in the future |
+
+Rejected events are also logged at WARN with `event_id`, `event_type`,
+`event_time`, and the measured drift. Drifted-but-accepted events are logged
+at INFO.
+
+**Recommended alerts:**
+- `rate(cost_consumer_events_rejected_total{reason="timestamp_too_old"}[5m]) > 0`
+  — a source is replaying stale events; investigate buffering behaviour
+- `rate(cost_consumer_events_timestamp_drift_total[5m]) > 1`
+  — sustained clock drift detected; misconfigured source clock
+
 ## Consequences
 
 - Events from sources with misconfigured clocks (> 2h drift) will be rejected.
@@ -135,10 +156,11 @@ The following attack remains possible within the 2-hour window:
 - The event replayer (`cmd/event-replayer`) and test tools that inject historical
   data must connect directly to the DB (`scripts/replicate-data.sh`) rather
   than through the ingest endpoint. This is the correct approach for testing.
-- The 2-hour window is a constant in `handler.go`. If the OSAC metering
-  collector's buffering window exceeds 2 hours (e.g., during an extended
-  network partition), those buffered events will be rejected on replay.
-  Operators should monitor the `event_time_rejected_total` metric (TODO).
+- The 2-hour window is a constant in `handler.go` (`maxEventAge`). If the OSAC
+  metering collector's buffering window exceeds 2 hours (e.g., during an
+  extended network partition), those buffered events will be rejected on replay.
+  The drift warning (30s threshold, `warnEventDrift`) will surface the problem
+  before the collector's buffer fills to the rejection threshold.
 
 ## Related
 

@@ -40,8 +40,13 @@ const (
 	// Events outside this window are rejected to prevent backdating attacks —
 	// a client setting event_time to a past billing period could inject data
 	// into closed quotas, cost history, and tier waterfall calculations.
-	maxEventAge    = 2 * time.Hour  // reject events older than 2 hours
+	maxEventAge    = 2 * time.Hour   // reject events older than 2 hours
 	maxEventFuture = 5 * time.Minute // reject events more than 5 min in the future
+
+	// Events within the acceptance window but beyond this drift threshold are
+	// accepted but counted as drifted. Sustained drift warns of a misconfigured
+	// source clock that could still skew cumulative tier calculations.
+	warnEventDrift = 30 * time.Second
 )
 
 // Reconciler triggers a full OSAC reconciliation cycle.
@@ -230,6 +235,14 @@ func (h *APIHandler) IngestEvent(w http.ResponseWriter, r *http.Request) {
 		now := time.Now().UTC()
 		age := now.Sub(ce.Time.UTC())
 		if age > maxEventAge {
+			metrics.EventsRejectedTotal.WithLabelValues("timestamp_too_old").Inc()
+			h.logger.Warn("rejected event: timestamp too old",
+				"event_id", ce.ID,
+				"event_type", ce.Type,
+				"event_time", ce.Time.UTC(),
+				"age_minutes", age.Minutes(),
+				"max_age", maxEventAge,
+			)
 			writeErrorJSON(w,
 				fmt.Sprintf("event time is too old (%.0f minutes ago; max %s)",
 					age.Minutes(), maxEventAge),
@@ -237,11 +250,38 @@ func (h *APIHandler) IngestEvent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if age < -maxEventFuture {
+			metrics.EventsRejectedTotal.WithLabelValues("timestamp_too_future").Inc()
+			h.logger.Warn("rejected event: timestamp too far in the future",
+				"event_id", ce.ID,
+				"event_type", ce.Type,
+				"event_time", ce.Time.UTC(),
+				"future_by", (-age).Round(time.Second),
+				"max_future", maxEventFuture,
+			)
 			writeErrorJSON(w,
 				fmt.Sprintf("event time is too far in the future (%s; max %s)",
 					(-age).Round(time.Second), maxEventFuture),
 				http.StatusBadRequest)
 			return
+		}
+		// Event is within the acceptance window but drifted beyond the warn threshold.
+		// Count it so operators can detect misconfigured source clocks early.
+		if age > warnEventDrift {
+			metrics.EventsTimestampDriftTotal.WithLabelValues("past").Inc()
+			h.logger.Info("accepted event with drifted timestamp",
+				"event_id", ce.ID,
+				"event_type", ce.Type,
+				"event_time", ce.Time.UTC(),
+				"drift", age.Round(time.Second),
+			)
+		} else if age < -warnEventDrift {
+			metrics.EventsTimestampDriftTotal.WithLabelValues("future").Inc()
+			h.logger.Info("accepted event with future-drifted timestamp",
+				"event_id", ce.ID,
+				"event_type", ce.Type,
+				"event_time", ce.Time.UTC(),
+				"drift", (-age).Round(time.Second),
+			)
 		}
 	}
 
