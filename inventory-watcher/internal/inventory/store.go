@@ -360,6 +360,26 @@ CREATE TABLE IF NOT EXISTS splunk_cursor (
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 INSERT INTO splunk_cursor (id, last_sent_id) VALUES (1, 0) ON CONFLICT DO NOTHING;
+
+-- Performance fixes for scale (identified via load testing at 50 events/s).
+-- All use CREATE INDEX IF NOT EXISTS / DROP INDEX IF EXISTS — safe on existing DBs.
+
+-- Fix 1: idx_me_unrated — add period_start so MIN(period_start) WHERE rated_at IS NULL
+-- is an index-only scan (pipeline lag metric). Old index only had (id).
+DROP INDEX IF EXISTS idx_me_unrated;
+CREATE INDEX IF NOT EXISTS idx_me_unrated ON metering_entries (period_start, id) WHERE rated_at IS NULL;
+
+-- Fix 2: cross-tenant cost report — period_start was not a leading column so
+-- GET /api/v1/reports/costs without a tenant filter did a full table scan.
+CREATE INDEX IF NOT EXISTS idx_ce_period_tenant ON cost_entries (period_start, period_end, tenant_id);
+
+-- Fix 3: budget quota SUM — meter_name missing from cost_entries tenant index so
+-- CostSum() scanned all tenant entries and filtered meter_name in the heap.
+CREATE INDEX IF NOT EXISTS idx_ce_tenant_meter_period ON cost_entries (tenant_id, meter_name, period_start, period_end);
+
+-- Fix 4: wallet deduction sweep — no partial index on unapplied entries so
+-- UnappliedCostEntries() read all tenant cost entries per sweep cycle.
+CREATE INDEX IF NOT EXISTS idx_ce_unapplied ON cost_entries (tenant_id, period_start) WHERE wallet_applied < cost_amount;
 `
 
 // InsertRawEvent appends an event to the immutable audit log.
@@ -1930,13 +1950,20 @@ func (s *Store) CostBreakdown(ctx context.Context, tenantID, resourceType string
 }
 
 // PipelineSummary returns counts from all pipeline tables.
+// The three high-volume tables (raw_events, metering_entries, cost_entries) use
+// pg_stat_user_tables.n_live_tup — an approximate but O(1) count maintained by
+// PostgreSQL's autovacuum. Exact count(*) on tables with millions of rows takes
+// several seconds and degrades linearly; n_live_tup is accurate to within the
+// last autovacuum cycle (typically seconds to minutes).
+// The smaller tables (rates, inventory_*) use exact count(*) since they are
+// bounded in size and the cost is negligible.
 func (s *Store) PipelineSummary(ctx context.Context) (*PipelineSummary, error) {
 	var ps PipelineSummary
 	err := s.pool.QueryRow(ctx, `
 		SELECT
-			(SELECT count(*)::int FROM raw_events),
-			(SELECT count(*)::int FROM metering_entries),
-			(SELECT count(*)::int FROM cost_entries),
+			(SELECT n_live_tup::int FROM pg_stat_user_tables WHERE relname = 'raw_events'),
+			(SELECT n_live_tup::int FROM pg_stat_user_tables WHERE relname = 'metering_entries'),
+			(SELECT n_live_tup::int FROM pg_stat_user_tables WHERE relname = 'cost_entries'),
 			(SELECT count(*)::int FROM rates),
 			(SELECT count(*)::int FROM inventory_compute_instance WHERE deleted_at IS NULL),
 			(SELECT count(*)::int FROM inventory_cluster WHERE deleted_at IS NULL),
