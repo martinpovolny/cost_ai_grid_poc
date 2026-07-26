@@ -1,7 +1,7 @@
 // Package controller watches Kubernetes resources and emits cost CloudEvents.
 package controller
 
-//+kubebuilder:rbac:groups="",resources=pods;nodes;persistentvolumeclaims;services;namespaces,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods;nodes;persistentvolumeclaims;services;namespaces,verbs=get;list;watch
 
 import (
 	"context"
@@ -17,6 +17,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 
 	"github.com/myersCody/cost_ai_grid_poc/kube-cost-agent/internal/emitter"
+)
+
+// Field name constants used as CloudEvent data keys.
+const (
+	fieldClusterID = "cluster_id"
+	fieldTenant    = "tenant"
+	fieldNamespace = "namespace"
+	fieldNode      = "node"
+	fieldAction    = "action"
+	fieldLabels    = "labels"
+	fieldSpot      = "spot"
 )
 
 // Controller watches Kubernetes resources and emits cost CloudEvents.
@@ -87,22 +98,30 @@ func (c *Controller) Start(ctx context.Context) error {
 	}
 
 	// Register event handlers.
-	podInformer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+	if _, err := podInformer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc:    c.onPodAdd,
 		DeleteFunc: c.onPodDelete,
-	})
-	nodeInformer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+	}); err != nil {
+		return fmt.Errorf("failed to add pod event handler: %w", err)
+	}
+	if _, err := nodeInformer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc:    c.onNodeAdd,
 		DeleteFunc: c.onNodeDelete,
-	})
-	pvcInformer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+	}); err != nil {
+		return fmt.Errorf("failed to add node event handler: %w", err)
+	}
+	if _, err := pvcInformer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc:    c.onPVCAdd,
 		DeleteFunc: c.onPVCDelete,
-	})
-	svcInformer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+	}); err != nil {
+		return fmt.Errorf("failed to add pvc event handler: %w", err)
+	}
+	if _, err := svcInformer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc:    c.onServiceAdd,
 		DeleteFunc: c.onServiceDelete,
-	})
+	}); err != nil {
+		return fmt.Errorf("failed to add service event handler: %w", err)
+	}
 
 	// Start heartbeat goroutine for pods.
 	go c.heartbeatLoop(ctx)
@@ -125,7 +144,7 @@ func (c *Controller) NeedLeaderElection() bool {
 // Event handlers
 // ---------------------------------------------------------------------------
 
-func (c *Controller) onPodAdd(obj interface{}) {
+func (c *Controller) onPodAdd(obj any) {
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		return
@@ -136,10 +155,10 @@ func (c *Controller) onPodAdd(obj interface{}) {
 	data := c.podEventData(pod, "CREATED")
 	subject := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
 	c.emitter.Emit("kube.pod.lifecycle", subject, data)
-	c.logger.V(1).Info("Emitted Pod lifecycle event", "action", "CREATED", "pod", subject)
+	c.logger.V(1).Info("Emitted Pod lifecycle event", fieldAction, "CREATED", "pod", subject)
 }
 
-func (c *Controller) onPodDelete(obj interface{}) {
+func (c *Controller) onPodDelete(obj any) {
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		// Handle DeletedFinalStateUnknown from the cache.
@@ -158,7 +177,7 @@ func (c *Controller) onPodDelete(obj interface{}) {
 	data := c.podEventData(pod, "DELETED")
 	subject := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
 	c.emitter.Emit("kube.pod.lifecycle", subject, data)
-	c.logger.V(1).Info("Emitted Pod lifecycle event", "action", "DELETED", "pod", subject)
+	c.logger.V(1).Info("Emitted Pod lifecycle event", fieldAction, "DELETED", "pod", subject)
 
 	// Clean up heartbeat tracking.
 	c.mu.Lock()
@@ -166,17 +185,17 @@ func (c *Controller) onPodDelete(obj interface{}) {
 	c.mu.Unlock()
 }
 
-func (c *Controller) onNodeAdd(obj interface{}) {
+func (c *Controller) onNodeAdd(obj any) {
 	node, ok := obj.(*corev1.Node)
 	if !ok {
 		return
 	}
 	data := c.nodeEventData(node, "CREATED")
 	c.emitter.Emit("kube.node.lifecycle", node.Name, data)
-	c.logger.V(1).Info("Emitted Node lifecycle event", "action", "CREATED", "node", node.Name)
+	c.logger.V(1).Info("Emitted Node lifecycle event", fieldAction, "CREATED", fieldNode, node.Name)
 }
 
-func (c *Controller) onNodeDelete(obj interface{}) {
+func (c *Controller) onNodeDelete(obj any) {
 	node, ok := obj.(*corev1.Node)
 	if !ok {
 		tombstone, ok := obj.(toolscache.DeletedFinalStateUnknown)
@@ -190,10 +209,10 @@ func (c *Controller) onNodeDelete(obj interface{}) {
 	}
 	data := c.nodeEventData(node, "DELETED")
 	c.emitter.Emit("kube.node.lifecycle", node.Name, data)
-	c.logger.V(1).Info("Emitted Node lifecycle event", "action", "DELETED", "node", node.Name)
+	c.logger.V(1).Info("Emitted Node lifecycle event", fieldAction, "DELETED", fieldNode, node.Name)
 }
 
-func (c *Controller) onPVCAdd(obj interface{}) {
+func (c *Controller) onPVCAdd(obj any) {
 	pvc, ok := obj.(*corev1.PersistentVolumeClaim)
 	if !ok {
 		return
@@ -204,10 +223,10 @@ func (c *Controller) onPVCAdd(obj interface{}) {
 	data := c.pvcEventData(pvc, "CREATED")
 	subject := fmt.Sprintf("%s/%s", pvc.Namespace, pvc.Name)
 	c.emitter.Emit("kube.pvc.lifecycle", subject, data)
-	c.logger.V(1).Info("Emitted PVC lifecycle event", "action", "CREATED", "pvc", subject)
+	c.logger.V(1).Info("Emitted PVC lifecycle event", fieldAction, "CREATED", "pvc", subject)
 }
 
-func (c *Controller) onPVCDelete(obj interface{}) {
+func (c *Controller) onPVCDelete(obj any) {
 	pvc, ok := obj.(*corev1.PersistentVolumeClaim)
 	if !ok {
 		tombstone, ok := obj.(toolscache.DeletedFinalStateUnknown)
@@ -225,10 +244,10 @@ func (c *Controller) onPVCDelete(obj interface{}) {
 	data := c.pvcEventData(pvc, "DELETED")
 	subject := fmt.Sprintf("%s/%s", pvc.Namespace, pvc.Name)
 	c.emitter.Emit("kube.pvc.lifecycle", subject, data)
-	c.logger.V(1).Info("Emitted PVC lifecycle event", "action", "DELETED", "pvc", subject)
+	c.logger.V(1).Info("Emitted PVC lifecycle event", fieldAction, "DELETED", "pvc", subject)
 }
 
-func (c *Controller) onServiceAdd(obj interface{}) {
+func (c *Controller) onServiceAdd(obj any) {
 	svc, ok := obj.(*corev1.Service)
 	if !ok {
 		return
@@ -242,10 +261,10 @@ func (c *Controller) onServiceAdd(obj interface{}) {
 	data := c.serviceEventData(svc, "CREATED")
 	subject := fmt.Sprintf("%s/%s", svc.Namespace, svc.Name)
 	c.emitter.Emit("kube.service.lifecycle", subject, data)
-	c.logger.V(1).Info("Emitted Service lifecycle event", "action", "CREATED", "service", subject)
+	c.logger.V(1).Info("Emitted Service lifecycle event", fieldAction, "CREATED", "service", subject)
 }
 
-func (c *Controller) onServiceDelete(obj interface{}) {
+func (c *Controller) onServiceDelete(obj any) {
 	svc, ok := obj.(*corev1.Service)
 	if !ok {
 		tombstone, ok := obj.(toolscache.DeletedFinalStateUnknown)
@@ -266,7 +285,7 @@ func (c *Controller) onServiceDelete(obj interface{}) {
 	data := c.serviceEventData(svc, "DELETED")
 	subject := fmt.Sprintf("%s/%s", svc.Namespace, svc.Name)
 	c.emitter.Emit("kube.service.lifecycle", subject, data)
-	c.logger.V(1).Info("Emitted Service lifecycle event", "action", "DELETED", "service", subject)
+	c.logger.V(1).Info("Emitted Service lifecycle event", fieldAction, "DELETED", "service", subject)
 }
 
 // ---------------------------------------------------------------------------
@@ -341,12 +360,12 @@ func (c *Controller) emitPodHeartbeats(ctx context.Context) {
 
 		cpuReq, memReq := aggregateRequests(pod)
 
-		data := map[string]interface{}{
-			"cluster_id":       c.clusterID,
-			"tenant":           c.resolveTenant(pod.Namespace),
-			"namespace":        pod.Namespace,
+		data := map[string]any{
+			fieldClusterID:       c.clusterID,
+			fieldTenant:           c.resolveTenant(pod.Namespace),
+			fieldNamespace:        pod.Namespace,
 			"pod":              pod.Name,
-			"node":             pod.Spec.NodeName,
+			fieldNode:             pod.Spec.NodeName,
 			"cpu_request":      cpuReq.AsApproximateFloat64(),
 			"memory_request":   memReq.Value(),
 			"duration_seconds": durationSec,
@@ -378,32 +397,32 @@ func (c *Controller) emitNodeHeartbeats(ctx context.Context) {
 // Data extraction helpers
 // ---------------------------------------------------------------------------
 
-func (c *Controller) podEventData(pod *corev1.Pod, action string) map[string]interface{} {
+func (c *Controller) podEventData(pod *corev1.Pod, action string) map[string]any {
 	cpuReq, memReq := aggregateRequests(pod)
 	cpuLim, memLim := aggregateLimits(pod)
 	gpuCount := countGPUs(pod)
 	ownerKind, ownerName := resolveOwner(pod)
 
-	return map[string]interface{}{
-		"cluster_id":   c.clusterID,
-		"tenant":       c.resolveTenant(pod.Namespace),
-		"action":       action,
-		"namespace":    pod.Namespace,
-		"pod":          pod.Name,
-		"node":         pod.Spec.NodeName,
-		"cpu_request":  cpuReq.AsApproximateFloat64(),
-		"cpu_limit":    cpuLim.AsApproximateFloat64(),
-		"mem_request":  memReq.Value(),
-		"mem_limit":    memLim.Value(),
-		"gpu_count":    gpuCount,
-		"qos":          string(pod.Status.QOSClass),
-		"owner_kind":   ownerKind,
-		"owner_name":   ownerName,
-		"labels":       pod.Labels,
+	return map[string]any{
+		fieldClusterID:  c.clusterID,
+		fieldTenant:      c.resolveTenant(pod.Namespace),
+		fieldAction:      action,
+		fieldNamespace:   pod.Namespace,
+		"pod":         pod.Name,
+		fieldNode:        pod.Spec.NodeName,
+		"cpu_request": cpuReq.AsApproximateFloat64(),
+		"cpu_limit":   cpuLim.AsApproximateFloat64(),
+		"mem_request": memReq.Value(),
+		"mem_limit":   memLim.Value(),
+		"gpu_count":   gpuCount,
+		"qos":         string(pod.Status.QOSClass),
+		"owner_kind":  ownerKind,
+		"owner_name":  ownerName,
+		fieldLabels:      pod.Labels,
 	}
 }
 
-func (c *Controller) nodeEventData(node *corev1.Node, action string) map[string]interface{} {
+func (c *Controller) nodeEventData(node *corev1.Node, action string) map[string]any {
 	labels := node.Labels
 	instanceType := labels["node.kubernetes.io/instance-type"]
 	zone := labels["topology.kubernetes.io/zone"]
@@ -411,40 +430,40 @@ func (c *Controller) nodeEventData(node *corev1.Node, action string) map[string]
 
 	// Spot detection: check common labels used by cloud providers.
 	spot := false
-	if v, ok := labels["node.kubernetes.io/lifecycle"]; ok && v == "spot" {
+	if v, ok := labels["node.kubernetes.io/lifecycle"]; ok && v == fieldSpot {
 		spot = true
 	}
-	if v, ok := labels["karpenter.sh/capacity-type"]; ok && v == "spot" {
+	if v, ok := labels["karpenter.sh/capacity-type"]; ok && v == fieldSpot {
 		spot = true
 	}
 
-	return map[string]interface{}{
-		"cluster_id":     c.clusterID,
-		"action":         action,
-		"node":           node.Name,
-		"instance_type":  instanceType,
-		"zone":           zone,
-		"region":         region,
-		"spot":           spot,
-		"capacity_cpu":   node.Status.Capacity.Cpu().AsApproximateFloat64(),
-		"capacity_mem":   node.Status.Capacity.Memory().Value(),
-		"alloc_cpu":      node.Status.Allocatable.Cpu().AsApproximateFloat64(),
-		"alloc_mem":      node.Status.Allocatable.Memory().Value(),
+	return map[string]any{
+		fieldClusterID:  c.clusterID,
+		fieldAction:     action,
+		fieldNode:       node.Name,
+		"instance_type": instanceType,
+		"zone":          zone,
+		"region":        region,
+		fieldSpot:       spot,
+		"capacity_cpu":  node.Status.Capacity.Cpu().AsApproximateFloat64(),
+		"capacity_mem":  node.Status.Capacity.Memory().Value(),
+		"alloc_cpu":     node.Status.Allocatable.Cpu().AsApproximateFloat64(),
+		"alloc_mem":     node.Status.Allocatable.Memory().Value(),
 	}
 }
 
-func (c *Controller) pvcEventData(pvc *corev1.PersistentVolumeClaim, action string) map[string]interface{} {
-	data := map[string]interface{}{
-		"cluster_id":    c.clusterID,
-		"tenant":        c.resolveTenant(pvc.Namespace),
-		"action":        action,
-		"namespace":     pvc.Namespace,
+func (c *Controller) pvcEventData(pvc *corev1.PersistentVolumeClaim, action string) map[string]any {
+	data := map[string]any{
+		fieldClusterID:    c.clusterID,
+		fieldTenant:        c.resolveTenant(pvc.Namespace),
+		fieldAction:        action,
+		fieldNamespace:     pvc.Namespace,
 		"pvc":           pvc.Name,
 		"storage_class": ptrString(pvc.Spec.StorageClassName),
 		"volume_name":   pvc.Spec.VolumeName,
 		"access_modes":  accessModesToStrings(pvc.Spec.AccessModes),
 		"phase":         string(pvc.Status.Phase),
-		"labels":        pvc.Labels,
+		fieldLabels:        pvc.Labels,
 	}
 
 	// Requested storage size.
@@ -462,7 +481,7 @@ func (c *Controller) pvcEventData(pvc *corev1.PersistentVolumeClaim, action stri
 	return data
 }
 
-func (c *Controller) serviceEventData(svc *corev1.Service, action string) map[string]interface{} {
+func (c *Controller) serviceEventData(svc *corev1.Service, action string) map[string]any {
 	var lbIPs []string
 	for _, ingress := range svc.Status.LoadBalancer.Ingress {
 		if ingress.IP != "" {
@@ -472,16 +491,16 @@ func (c *Controller) serviceEventData(svc *corev1.Service, action string) map[st
 		}
 	}
 
-	return map[string]interface{}{
-		"cluster_id":   c.clusterID,
-		"tenant":       c.resolveTenant(svc.Namespace),
-		"action":       action,
-		"namespace":    svc.Namespace,
+	return map[string]any{
+		fieldClusterID:   c.clusterID,
+		fieldTenant:       c.resolveTenant(svc.Namespace),
+		fieldAction:       action,
+		fieldNamespace:    svc.Namespace,
 		"service":      svc.Name,
 		"type":         string(svc.Spec.Type),
 		"lb_endpoints": lbIPs,
 		"ports":        servicePorts(svc),
-		"labels":       svc.Labels,
+		fieldLabels:       svc.Labels,
 	}
 }
 
@@ -591,10 +610,10 @@ func accessModesToStrings(modes []corev1.PersistentVolumeAccessMode) []string {
 	return out
 }
 
-func servicePorts(svc *corev1.Service) []map[string]interface{} {
-	ports := make([]map[string]interface{}, len(svc.Spec.Ports))
+func servicePorts(svc *corev1.Service) []map[string]any {
+	ports := make([]map[string]any, len(svc.Spec.Ports))
 	for i, p := range svc.Spec.Ports {
-		ports[i] = map[string]interface{}{
+		ports[i] = map[string]any{
 			"name":     p.Name,
 			"port":     p.Port,
 			"protocol": string(p.Protocol),

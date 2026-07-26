@@ -35,7 +35,7 @@ type CloudEvent struct {
 	ID          string      `json:"id"`
 	Time        time.Time   `json:"time"`
 	Subject     string      `json:"subject"`
-	Data        interface{} `json:"data"`
+	Data        any `json:"data"`
 }
 
 // Emitter batches CloudEvents and delivers them to the cost-event-consumer.
@@ -66,7 +66,7 @@ func New(consumerURL, token, clusterID string, batchSize int, batchInterval time
 
 // Emit constructs a CloudEvent and pushes it onto the internal channel for
 // batched delivery.
-func (e *Emitter) Emit(eventType, subject string, data interface{}) {
+func (e *Emitter) Emit(eventType, subject string, data any) {
 	ce := CloudEvent{
 		SpecVersion: "1.0",
 		Type:        eventType,
@@ -79,7 +79,7 @@ func (e *Emitter) Emit(eventType, subject string, data interface{}) {
 	select {
 	case e.eventCh <- ce:
 	default:
-		e.logger.V(0).Info("event channel full, dropping event",
+		e.logger.Info("event channel full, dropping event",
 			"type", eventType, "subject", subject)
 		eventsEmitted.WithLabelValues(eventType, "dropped").Inc()
 	}
@@ -160,7 +160,7 @@ func (e *Emitter) sendWithRetry(ce *CloudEvent) {
 
 		resp, err := e.client.Do(req)
 		if err != nil {
-			e.logger.V(0).Info("POST failed, retrying",
+			e.logger.Info("POST failed, retrying",
 				"attempt", attempt, "error", err,
 				"type", ce.Type, "id", ce.ID)
 			if attempt < maxAttempts {
@@ -169,14 +169,14 @@ func (e *Emitter) sendWithRetry(ce *CloudEvent) {
 			}
 			continue
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			eventsEmitted.WithLabelValues(ce.Type, "success").Inc()
 			return
 		}
 
-		e.logger.V(0).Info("non-2xx response, retrying",
+		e.logger.Info("non-2xx response, retrying",
 			"attempt", attempt, "status", resp.StatusCode,
 			"type", ce.Type, "id", ce.ID)
 		if attempt < maxAttempts {
