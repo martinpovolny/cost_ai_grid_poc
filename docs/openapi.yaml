@@ -179,14 +179,26 @@ paths:
             processing but is rejected by the IPP client.
         "400":
           description: >-
-            Invalid JSON, missing required fields (`id`, `type`), or
-            missing resource/tenant IDs in the event data
+            Invalid JSON, missing required fields (`id`, `type`),
+            missing resource/tenant IDs in the event data, or the
+            event `time` is outside the accepted window:
+            more than 2 hours in the past (prevents backdating attacks
+            that would inject data into closed billing periods) or more
+            than 5 minutes in the future (indicates a misconfigured clock).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error: "missing required field: id"
+              examples:
+                missing_field:
+                  value:
+                    error: "missing required field: id"
+                too_old:
+                  value:
+                    error: "event time is too old (127 minutes ago; max 2h0m0s)"
+                too_future:
+                  value:
+                    error: "event time is too far in the future (3m12s; max 5m0s)"
         "409":
           description: Duplicate event — event ID already exists (idempotent deduplication)
           content:

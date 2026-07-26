@@ -35,6 +35,13 @@ const (
 
 	maxRequestBodySize = 1 << 20 // 1MB
 	maxIDLength        = 256
+
+	// Ingest timestamp validation window.
+	// Events outside this window are rejected to prevent backdating attacks —
+	// a client setting event_time to a past billing period could inject data
+	// into closed quotas, cost history, and tier waterfall calculations.
+	maxEventAge    = 2 * time.Hour  // reject events older than 2 hours
+	maxEventFuture = 5 * time.Minute // reject events more than 5 min in the future
 )
 
 // Reconciler triggers a full OSAC reconciliation cycle.
@@ -213,6 +220,29 @@ func (h *APIHandler) IngestEvent(w http.ResponseWriter, r *http.Request) {
 	if ce.ID == "" || ce.Type == "" {
 		writeErrorJSON(w, "id and type are required", http.StatusBadRequest)
 		return
+	}
+
+	// Validate event timestamp to prevent backdating attacks.
+	// Events with timestamps too far in the past could inject data into
+	// closed billing periods, manipulate quota sums, or corrupt cost history.
+	// Events too far in the future indicate a misconfigured clock.
+	if !ce.Time.IsZero() {
+		now := time.Now().UTC()
+		age := now.Sub(ce.Time.UTC())
+		if age > maxEventAge {
+			writeErrorJSON(w,
+				fmt.Sprintf("event time is too old (%.0f minutes ago; max %s)",
+					age.Minutes(), maxEventAge),
+				http.StatusBadRequest)
+			return
+		}
+		if age < -maxEventFuture {
+			writeErrorJSON(w,
+				fmt.Sprintf("event time is too far in the future (%s; max %s)",
+					(-age).Round(time.Second), maxEventFuture),
+				http.StatusBadRequest)
+			return
+		}
 	}
 
 	ctx := r.Context()
