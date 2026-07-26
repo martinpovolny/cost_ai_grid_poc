@@ -380,6 +380,11 @@ CREATE INDEX IF NOT EXISTS idx_ce_tenant_meter_period ON cost_entries (tenant_id
 -- Fix 4: wallet deduction sweep — no partial index on unapplied entries so
 -- UnappliedCostEntries() read all tenant cost entries per sweep cycle.
 CREATE INDEX IF NOT EXISTS idx_ce_unapplied ON cost_entries (tenant_id, period_start) WHERE wallet_applied < cost_amount;
+
+-- Missing project+meter composite on metering_entries — MeteringSumByProject
+-- scanned all tenant+meter entries and filtered project_id in the heap.
+CREATE INDEX IF NOT EXISTS idx_me_tenant_project_meter
+  ON metering_entries (tenant_id, project_id, meter_name, period_start, period_end);
 `
 
 // InsertRawEvent appends an event to the immutable audit log.
@@ -1543,7 +1548,7 @@ func (s *Store) AdjustWallet(ctx context.Context, walletID string, amount decima
 func (s *Store) UnappliedCostEntries(ctx context.Context, tenantID string) ([]CostEntry, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, metering_entry_id, rate_id, tenant_id, project_id, user_id, resource_type, resource_id,
-		       meter_name, metered_value, cost_amount, currency, period_start, period_end
+		       meter_name, metered_value, cost_amount, currency, period_start, period_end, wallet_applied
 		FROM cost_entries
 		WHERE tenant_id = $1 AND wallet_applied < cost_amount
 		ORDER BY period_start
@@ -1558,7 +1563,7 @@ func (s *Store) UnappliedCostEntries(ctx context.Context, tenantID string) ([]Co
 		var ce CostEntry
 		if err := rows.Scan(&ce.ID, &ce.MeteringEntryID, &ce.RateID, &ce.TenantID, &ce.ProjectID, &ce.UserID,
 			&ce.ResourceType, &ce.ResourceID, &ce.MeterName, &ce.MeteredValue, &ce.CostAmount,
-			&ce.Currency, &ce.PeriodStart, &ce.PeriodEnd); err != nil {
+			&ce.Currency, &ce.PeriodStart, &ce.PeriodEnd, &ce.WalletApplied); err != nil {
 			return nil, err
 		}
 		results = append(results, ce)
