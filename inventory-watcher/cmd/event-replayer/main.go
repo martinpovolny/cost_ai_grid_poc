@@ -177,11 +177,12 @@ func sendCopy(ctx context.Context, events []json.RawMessage, url, token string,
 	}
 
 	go func() {
+	outer:
 		for _, ev := range events {
 			select {
 			case ch <- ev:
 			case <-ctx.Done():
-				break
+				break outer
 			}
 		}
 		close(ch)
@@ -256,7 +257,7 @@ func loadEvents(path string) ([]json.RawMessage, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer f.Close()
+		defer f.Close() //nolint:errcheck
 	}
 
 	var events []json.RawMessage
