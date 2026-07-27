@@ -29,11 +29,15 @@ spec:
           env:
             - name: OSAC_BASE_URL
               value: "http://osac-rest.osac.svc:8000"
+            - name: OSAC_GRPC_ADDRESS
+              value: "osac-grpc.osac.svc.cluster.local:8010"
             - name: OSAC_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: cost-consumer-secrets
                   key: osac-token
+            - name: OSAC_CA_CERT
+              value: "/ca-bundle/bundle.pem"
             - name: INVENTORY_DB_URL
               valueFrom:
                 secretKeyRef:
@@ -45,6 +49,9 @@ spec:
               value: "json"
             - name: LOG_LEVEL
               value: "info"
+          volumeMounts:
+            - name: ca-bundle
+              mountPath: /ca-bundle
           livenessProbe:
             httpGet:
               path: /healthz
@@ -64,6 +71,10 @@ spec:
             limits:
               memory: "256Mi"
               cpu: "500m"
+      volumes:
+        - name: ca-bundle
+          configMap:
+            name: ca-bundle
 ---
 apiVersion: v1
 kind: Service
