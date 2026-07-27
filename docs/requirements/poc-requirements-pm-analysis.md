@@ -6,19 +6,20 @@
 > (usually OSAC, sometimes us).
 >
 > **Source of truth:** [poc_requirements_overview.md](poc_requirements_overview.md)
-> (v1.5, Jul 20, 2026). This doc synthesizes that spec together with
-> [implementation-status.md](../implementation-status.md),
+> (v1.5 header / v1.6 changelog through Jul 21, 2026). This doc synthesizes
+> that spec together with [implementation-status.md](../implementation-status.md),
 > [requirements-comparison.md](requirements-comparison.md), the per-requirement
 > gap analyses (req1, req2, req8, req9, req10, req11), and
 > [osac-open-questions.md](osac-open-questions.md). It does not re-derive
 > status from the codebase — it explains and consolidates what those docs
-> already say.
+> already say. Jul 23–27 updates below also incorporate merged hardening
+> work (sweep SLA, OpenAPI API surface, catalog–metering discussion).
 >
 > **Scope:** The 19 core PoC requirements (POC-ENV through REQ-14, in spec
 > priority-rank order). Future Work (REQ-6) and the formal Out-of-Scope list
 > are intentionally excluded — see the overview doc for those.
 >
-> **Last updated:** Jul 22, 2026.
+> **Last updated:** Jul 27, 2026.
 >
 > **Acceptance criteria key:** ✅ met today &nbsp;·&nbsp; ⚠️ partially met / met with a caveat worth knowing about &nbsp;·&nbsp; ❌ not met yet
 
@@ -31,7 +32,7 @@
 | 1 | POC-ENV | CRITICAL | On-premise deployment | Partial | CRC (dev/test) deployment done; production Helm/OLM packaging not started — owned by the RHCM platform team, not this component |
 | 2 | POC-ARCH | CRITICAL | Capacity-based charging model | Done | Catalog fallback implemented (PR #59) — metering resolves cores/memory from InstanceType catalog when OSAC removes them from ComputeInstance |
 | 3 | REQ-1 | CRITICAL | OSAC integration | Done | No known gaps |
-| 4 | REQ-1b | CRITICAL | Heartbeat event ingestion | Done | Satisfied via a local 60s sweep, not an actual OSAC-emitted heartbeat event — functionally equivalent, mechanically different |
+| 4 | REQ-1b | CRITICAL | Heartbeat event ingestion | Done | Satisfied via a local 45s metering sweep (was 60s), not an actual OSAC-emitted heartbeat event — functionally equivalent, mechanically different |
 | 5 | REQ-2 | CRITICAL | Near-real-time cost calculation | Done | No known gaps |
 | 6 | REQ-1a | HIGH | Cluster lifecycle via cluster orders | Done | No known gaps |
 | 7 | REQ-3a | HIGH | Tenant/project attribution | Done | Cost attribution + project-level quotas with roll-up + no-overcommit validation all implemented; Cost Management UI preferred provider surface; RBAC stays project-scoped |
@@ -40,7 +41,7 @@
 | 10 | REQ-10 | HIGH → Parked | Threshold notification back-channel | Done (pull) | Push/webhook notifications parked — OSAC has no receiver to act on them yet; also the alert path for REQ-14 low-balance thresholds |
 | 11 | REQ-13 | HIGH | Custom metrics / custom rates | Done | Only supports "creative math" on existing metrics today; a real backchannel to ask OSAC for brand-new meters doesn't exist |
 | 12 | REQ-2a | HIGH | MaaS CloudEvents & token metering | Done (emulated) | Real OSAC/RHOAI MaaS events don't exist yet; we're validated against an IPP plugin + echo LLM, not production inference traffic |
-| 13 | REQ-3b | MEDIUM | Service catalog sync | Done | Catalog sync + per-SKU pricing via `instance_type` rate dimension (PR #59) + catalog fallback; rate auto-derivation from catalog not built (manual seeding acceptable for PoC) |
+| 13 | REQ-3b | MEDIUM | Service catalog sync | Done | Catalog sync + per-SKU pricing via `instance_type` (PR #59) + catalog fallback; Moti catalog–metering discussion adds post-PoC gaps (attribution, versioning, soft-delete) — not Jul 31 blockers |
 | 14 | REQ-5 | MEDIUM | Chargeback reporting | Done | Project grouping, breakdown endpoint, daily resolution, date filtering (PR #42); CronJob export pattern documented and verified; CSV/JSON via API explicitly in scope |
 | 15 | REQ-7 | MEDIUM | Audit trail | Done | No known gaps for PoC scope |
 | 16 | REQ-11 | LOW | Cost tiers | Done | Per-event tiers (MaaS) + cumulative tiers (capacity) both implemented; `ApplyRateCumulative` with `MeteringSumBefore` + `billing.ResolvePeriod`; volume pricing deferred |
@@ -48,11 +49,13 @@
 | 18 | REQ-8 | HIGH → Parked | Bare metal costing | Done (ahead of schedule) | Built already, parked for Jul 31; BMaaS is an Aug 31 OSAC deliverable; standalone (non-OCP) bare metal confirmed IN for post-PoC |
 | 19 | REQ-14 | HIGH | Wallets (prepaid balance) | Done | Tenant-scoped wallets: create, top-up, deduction sweep, status API, ledger audit; project-scoped wallets deferred |
 
-**At a glance (updated Jul 22):** 17 of 19 are Done, 1 is Partial (POC-ENV — owned by RHCM platform team), 1 is Done with note (REQ-11 — volume pricing deferred). Two requirements (REQ-10, REQ-8) remain explicitly parked by joint decision.
+**At a glance (updated Jul 27):** 17 of 19 are Done, 1 is Partial (POC-ENV — owned by RHCM platform team), 1 is Done with note (REQ-11 — volume pricing deferred). Two requirements (REQ-10, REQ-8) remain explicitly parked by joint decision. Requirement *status* is unchanged since Jul 22; the deltas below are hardening, SLA, API surface, and catalog correlation clarity.
 
-**Key changes since Jul 20:** REQ-3a project quota roll-up + overcommit validation implemented; REQ-9 all gaps closed (CRUD, monetary budgets, configurable thresholds/windows, fleet list); REQ-11 cumulative tiers implemented; REQ-12 marked Done (live queries); REQ-14 wallets fully implemented (create, top-up, deduction sweep, status, ledger).
+**Key changes since Jul 22:** Metering/rating sweeps shortened to **45s / 20s** for 90s E2E SLA headroom (closes the Jul 20 sweep-interval open question — [ADR-001](../decisions/001-metering-sweep-interval.md)); HTTP API migrated to OpenAPI/`oapi-codegen` ([ADR-005](../decisions/005-oapi-codegen-spec-first-api.md)); event timestamp validation at ingest ([ADR-006](../decisions/006-event-timestamp-validation.md)); wallet deduction + quota-path DB fixes under load; Moti catalog–metering brief clarifies post-PoC offering-level attribution (versioning, soft-delete, provisioning-group) beyond today's `instance_type` SKU pricing.
 
-**Key changes in v1.5 (Jul 20):** REQ-14 wallets added; REQ-9 reframed as fleet-level status + CRUD + no project-limit overcommit (grace periods OUT); Cost Management UI preferred for provider cost views; CaaS/VMaaS CloudEvents marked available; POC-ARCH explicitly OUT bare metal for PoC.
+**Key changes since Jul 20 (implementation wave):** REQ-3a project quota roll-up + overcommit validation; REQ-9 all gaps closed (CRUD, monetary budgets, configurable thresholds/windows, fleet list); REQ-11 cumulative tiers + decimal money; REQ-12 marked Done (live queries); REQ-14 wallets fully implemented (create, top-up, deduction sweep, status, ledger).
+
+**Key changes in v1.5 / v1.6 (Jul 20–21):** REQ-14 wallets added and hybrid funding / tenant-must-have / project-stretch clarified; REQ-9 reframed as fleet-level status + CRUD + no project-limit overcommit (grace periods OUT); Cost Management UI preferred for provider cost views; CaaS/VMaaS CloudEvents marked available; POC-ARCH explicitly OUT bare metal for PoC.
 
 ---
 
@@ -70,6 +73,8 @@ Demonstrate Cost Management running on-premise, driven by OSAC heartbeat events,
 
 **Current Implementation Status**
 - CRC (CodeReady Containers) deployment is documented and tested: [deployment checklist](../dev/crc-deployment-checklist.md), [full stack guide](../dev/crc-full-deployment.md), [OSAC-on-CRC guide](../dev/crc-osac-deployment.md), [dev setup guide](../dev/crc-dev-setup.md)
+- CRC footprint reduced (single CNPG instance) to fit demo RAM budgets
+- Load-testing / table-lifecycle / sizing docs landed for demo-scale operations ([performance next steps](../operations/performance-next-steps.md))
 - The RHCM Helm chart / OLM packaging for a true production on-prem deployment has **not started** — this is explicitly RHCM platform team scope, not the consumer component built in this PoC
 
 **Gap Summary**
@@ -96,8 +101,8 @@ Charge based on what was provisioned (VM size, cluster config) and for how long 
 **Current Implementation Status**
 - Standalone Go component (`inventory-watcher`) built specifically for this data path
 - Cost calculated from provisioned capacity via `internal/metering/metering.go` (`computeInstanceMeters`, `clusterMeters`)
-- Driven by the Watch stream + 60-second metering sweep, not workload-cluster metrics ([ADR-001](../decisions/001-metering-sweep-interval.md))
-- Meets the SLA comfortably: under 1ms per event, cost entries produced within 30 seconds
+- Driven by the Watch stream + 45-second metering sweep (default; was 60s), not workload-cluster metrics ([ADR-001](../decisions/001-metering-sweep-interval.md))
+- Meets the SLA comfortably: under 1ms per event; worst-case sweep-driven path ~65s with Watch delivery (25s headroom under the 90s E2E SLA)
 
 *July 14 meeting: OSAC removes cores/memory_gib from ComputeInstance*
 - **Resolved (PR #59, Jul 16):** `computeInstanceMeters` now includes a catalog fallback — when `cores == 0` and `instance_type` is set, specs are resolved from the `InstanceType` catalog (`inventory_instance_type` table, kept in sync by the reconciler). Additionally, the rate engine now supports per-SKU pricing via `instance_type` dimension, so operators can price per catalog item (e.g. $0.50/hr for m5.xlarge) instead of `cores × rate`. See [rate configuration guide](../rate-configuration-guide.md) and [gap analysis](req3b-instance-type-only-gap-analysis.md).
@@ -150,7 +155,7 @@ Receive periodic heartbeat events from OSAC at configurable intervals (10-30s), 
 - ✅ Events processed and cost calculated within the target SLA
 
 **Current Implementation Status**
-- Functionally satisfied today via a **local 60-second sweep** rather than an actual heartbeat CloudEvent emitted by OSAC's metering collector — see [ADR-003](../decisions/003-heartbeat-emitter-vs-sweep.md) for the full rationale
+- Functionally satisfied today via a **local 45-second metering sweep** (default `METERING_INTERVAL`; was 60s) rather than an actual heartbeat CloudEvent emitted by OSAC's metering collector — see [ADR-003](../decisions/003-heartbeat-emitter-vs-sweep.md) for the full rationale and [ADR-001](../decisions/001-metering-sweep-interval.md) for the Jul 23 interval reduction
 - The OSAC metering collector ([osac-metering-discover-poc](https://github.com/masayag/osac-metering-discover-poc)) exists but is not yet connected to Cost Management
 - `POST /api/v1/events` auto-creates tenant/project on first event
 - Under 1ms per event to process
@@ -160,8 +165,8 @@ The letter of the requirement ("receive heartbeat events") isn't literally true 
 
 **Action Items / Open Questions**
 - Transport mechanism (Kafka, HTTP, NATS?) still not agreed with OSAC
-- Interval: 10s vs. 30s was proposed but needs to be finalized and made configurable
-- **New (Jul 20):** should the local sweep be shorter (e.g. every 50s instead of 60s) so 30s OSAC emit + sweep + processing stays under the 90s end-to-end SLA in the worst case?
+- Interval: OSAC emit cadence (10s vs 30s) still needs finalization on their side; Cost's local sweep is configurable via `METERING_INTERVAL` / `RATING_INTERVAL`
+- ~~**New (Jul 20):** should the local sweep be shorter (e.g. every 50s instead of 60s) so 30s OSAC emit + sweep + processing stays under the 90s end-to-end SLA in the worst case?~~ — **Resolved (Jul 23):** defaults are now **45s metering / 20s rating** (~65s worst case with Watch delivery; ~25s headroom under 90s). See [ADR-001](../decisions/001-metering-sweep-interval.md)
 - Consolidated action item: agree on CloudEvents transport with OSAC — see [open question #13](osac-open-questions.md#event-transport)
 
 ---
@@ -178,15 +183,16 @@ Process OSAC heartbeat events and calculate costs within 60 seconds of receipt; 
 - ✅ Demonstrated with at least one workload type
 
 **Current Implementation Status**
-- Under 1ms per event to process; metering sweep every 60s, rating sweep every 30s — comfortably inside the 90s SLA under typical conditions
+- Under 1ms per event to process; metering sweep every **45s**, rating sweep every **20s** (defaults as of Jul 23) — ~25s headroom under the 90s E2E SLA on the sweep-driven path with Watch delivery
 - Cost entries queryable via [`snippets/query-costs.sh`](../../snippets/query-costs.sh) and the report API
 - Demonstrated with both VMs and MaaS models
+- **Jul 25:** ingest rejects events with invalid/out-of-window timestamps ([ADR-006](../decisions/006-event-timestamp-validation.md)) so backdated events cannot corrupt cumulative tiers / quota windows
 
 **Gap Summary**
-No functional gaps for the happy path. The Jul 20 open question on shortening the sweep (see REQ-1b) is about worst-case SLA headroom if OSAC emit latency approaches 30s — not a current demo blocker.
+No functional gaps for the happy path. The Jul 20 open question on shortening the sweep is closed (see REQ-1b).
 
 **Action Items / Open Questions**
-- Same sweep-interval question as REQ-1b (50s vs 60s for 90s E2E headroom)
+- ~~Same sweep-interval question as REQ-1b (50s vs 60s for 90s E2E headroom)~~ — **Resolved (Jul 23):** 45s / 20s defaults
 
 ---
 
@@ -362,16 +368,16 @@ Budgets (REQ-9) and wallets may coexist on the same tenant; hybrid funding also 
 - ⚠️ Configurable low-balance thresholds trigger alerts *(threshold flags returned in wallet status pull response; push alerts depend on REQ-10 unparking)*
 - ✅ Wallet operations are auditable (top-ups, deductions, adjustments) in the Cost Management audit log *(`wallet_ledger_entries` table with entry_type, amount, balance_after, cost_entry_id; queryable via `GET /api/v1/wallets/{id}/ledger`)*
 
-**Current Implementation Status (Jul 22)**
+**Current Implementation Status (Jul 27)**
 - **Schema:** `wallets` table (id, tenant_id, project_id, currency, balance, balance_floor, reference_balance, lifecycle_state, thresholds) + `wallet_ledger_entries` table (full ledger audit trail) + `wallet_applied` column on `cost_entries` for partial deduction tracking
 - **Models:** `WalletRecord`, `WalletLedgerEntry`, `WalletStatus` — all monetary fields use `decimal.Decimal` for billing-grade precision
-- **HTTP API:** `POST /api/v1/wallets` (create), `GET /api/v1/wallets/{id}` (status by wallet ID or tenant ID), `POST /api/v1/wallets/{id}/top-ups` (idempotent via `external_ref`), `POST /api/v1/wallets/{id}/adjustments` (manual credit), `GET /api/v1/wallets/{id}/ledger` (paginated audit trail)
-- **Deduction sweep:** `DeductWallets` in `rating.go` runs after `evaluateThresholds` in every rating sweep. For each tenant with an active wallet, finds unapplied cost entries (where `wallet_applied < cost_amount`), deducts FIFO, supports partial deduction + resume after top-up, respects `balance_floor`
+- **HTTP API (OpenAPI / `internal/api`):** `POST /api/v1/wallets` (create), `GET /api/v1/wallets/{id}` (status by wallet ID or tenant ID), `POST /api/v1/wallets/{id}/top-ups` (idempotent via `external_ref`), `POST /api/v1/wallets/{id}/adjustments` (positive credit today), `GET /api/v1/wallets/{id}/ledger` (paginated audit trail)
+- **Deduction sweep:** `DeductWallets` in `rating.go` runs after `evaluateThresholds` in every rating sweep. For each tenant with an active wallet, finds unapplied cost entries (where `wallet_applied < cost_amount`), deducts FIFO, supports partial deduction + resume after top-up, respects `balance_floor`. Jul 25–26: partial index + N+1 fix on the unapplied-cost path under load testing
 - **Tests:** `TestCreateWallet`, `TestCreateWallet_MissingTenant`, `TestWallet_TopUpAndStatus`, `TestWallet_DeductionViaRatingSweep` (end-to-end: create → top up → ingest event → rate → deduct → verify ledger)
 - Spec: [wallet-spec-draft.md](../poc_architecture/boundary_monitoring/wallet-spec-draft.md)
 
 **Gap Summary**
-Tenant-scoped wallets (PoC must-have) are fully implemented: create, top-up, automated deduction, status query, ledger audit. Project-scoped hybrid funding (postpaid corporate + prepaid experimental team) is deferred as stretch. Push alerts for low balance depend on REQ-10 unparking. Negative adjustments return 501 Not Implemented. Wallet IDs use UUIDs (via `google/uuid`); lifecycle supports `active` + `closed` only (`frozen` is a documented gap).
+Tenant-scoped wallets (PoC must-have) are fully implemented: create, top-up, automated deduction, status query, ledger audit. Project-scoped hybrid funding (postpaid corporate + prepaid experimental team) is deferred as stretch. Push alerts for low balance depend on REQ-10 unparking. **Negative adjustments** still return 501 Not Implemented on the HTTP path (`AdjustWallet` store helper exists; API wiring incomplete after the oapi-codegen migration). Wallet IDs use UUIDs (via `google/uuid`); lifecycle supports `active` + `closed` only (`frozen` is a documented gap).
 
 **Decisions (aligned with overview v1.6)**
 - Wallet scope (PoC): tenant must-have — **Done**; project optional / stretch — **deferred**
@@ -464,17 +470,19 @@ Read OSAC's service catalog for pricing; manual setup is acceptable for PoC, API
 
 **Current Implementation Status**
 - Catalog items synced via the reconciler for all three types: cluster, compute_instance, bare_metal_instance, each linked to a hardware-profile template
-- **New (PR #59):** Rate engine supports per-SKU pricing via `instance_type` dimension on the `rates` table with 4-way fallback (tenant+instance_type > instance_type > tenant > global). Three pricing models documented in the [rate configuration guide](../rate-configuration-guide.md)
-- **New (PR #59):** Catalog fallback in metering — when OSAC removes `cores`/`memory_gib` from `ComputeInstance`, metering resolves specs from the `InstanceType` catalog automatically
+- **PR #59:** Rate engine supports per-SKU pricing via `instance_type` dimension on the `rates` table with 4-way fallback (tenant+instance_type > instance_type > tenant > global). Three pricing models documented in the [rate configuration guide](../rate-configuration-guide.md)
+- **PR #59:** Catalog fallback in metering — when OSAC removes `cores`/`memory_gib` from `ComputeInstance`, metering resolves specs from the `InstanceType` catalog automatically
 - Rates still seeded manually (not auto-derived from catalog) — acceptable for PoC per the spec ("manual setup acceptable")
+- **Jul 21 catalog–metering discussion (Moti):** OSAC catalog today lacks versioning, immutable attribution (`catalog-item-id` / version / `provisioning-group-id`), billable-component declarations, and a soft-delete guarantee — so Cost can price by `instance_type` / synced catalog identity, but cannot yet produce offering-level reports like “RHEL 10 VM (Small)” with compute+storage+license decomposition. Cost stance: OSAC owns catalog identity + attribution on the event stream; Cost/Koku owns rate cards. See Moti’s discussion brief and the [meeting handoff](../../catalog-metering-integration-meeting-handoff.md) in the repo root
 
 **Gap Summary**
-The core REQ-3b capability — price per catalog item, not per raw CPU/memory — is now implemented. The OSAC `ComputeInstance` change (removing cores/memory) is no longer a risk. Rate auto-derivation from catalog pricing is not built but is explicitly deferred (PoC accepts manual setup).
+PoC REQ-3b (sync catalog items + price per catalog/`instance_type`, not raw CPU×rate) is implemented. Rate auto-derivation from catalog dollar fields is not built and remains explicitly deferred. **Post-PoC / OSAC-side:** full catalog-offering correlation (versioning, attribution stamps, soft-delete, enriched Watch fields, optional billable components) is the next layer — blocked on OSAC, not on Cost rate machinery.
 
 **Action Items / Open Questions**
 - ~~Action item: Martin to verify cost calculation works purely from `instance_type`~~ — **Done** (PR #59)
 - **Bare metal and catalog items are both missing from OSAC's public gRPC stream** (private-only today). Martin confirmed with Aishay this should be fixed on the public API; being addressed separately ([open questions #3, #4, #6](osac-open-questions.md))
 - Unresolved: can tenants override catalog prices, or create their own priced sub-offerings for their users? Raised by Moti, no answer yet ([open question #22](osac-open-questions.md#catalog-pricing-model))
+- **New (Jul 21 Moti brief):** confirm pricing ownership (Cost preference: rates stay in Cost keyed by catalog item); soft-delete for referenced catalog items; who stamps attribution at provision time; how child resources (boot volume, NIC) inherit `provisioning-group-id`
 
 ---
 
@@ -491,8 +499,9 @@ Export chargeback reports covering both capacity-based and consumption-based dim
 **Current Implementation Status**
 - `GET /api/v1/reports/costs` supports `group_by=tenant/resource_type/meter/resource/project/user`, date filtering (`?from=&to=`), daily resolution (`?resolution=daily`), and CSV/JSON export with Koku-compatible envelope — all added in PR #42
 - `GET /api/v1/reports/breakdown` provides per-resource line-item drill-down (PR #42)
+- `GET /api/v1/rates` exports configured rates (JSON/CSV) for operator visibility
 - Scheduled export documented as a [Kubernetes CronJob pattern](../dev/scheduled-chargeback-export.md) calling the report API on a schedule — verified on k3d, pending PM sign-off on whether this satisfies the acceptance criterion vs. a built-in scheduler
-- Debug dashboard consumes the same endpoint, so dashboard and export are consistent by construction
+- Debug dashboard / `/reports` UI consumes the same OpenAPI endpoints, so dashboard and export are consistent by construction
 
 **Gap Summary**
 No functional gaps. The scheduled export is a documented operational pattern (CronJob calling the API), not a built-in feature — whether that's sufficient depends on PM's reading of "exportable."
@@ -547,6 +556,7 @@ Tiered pricing for both capacity-based and MaaS consumption-based rates (e.g., f
 - **Decimal money:** all pricing fields (`PricePerUnit`, `CostAmount`, `Tier.PricePerUnit`) use `shopspring/decimal` for billing-grade precision
 - **Default seed includes cumulative tiers:** `vm_memory_gib_seconds` (20 GiB free/month, then graduated) and `maas_tokens_in` (1M free/month, then $0.50/M)
 - **Test coverage:** `TestApplyRateCumulative_FullMonthWorkedExample` verifies the $13.60 result for 200 GiB/month; `TestSweep_CumulativeTiers` integration test verifies the full pipeline
+- **Jul 25:** backdated-event protection via ingest timestamp validation ([ADR-006](../decisions/006-event-timestamp-validation.md)) — relevant because cumulative tiers key off `period_start` / `MeteringSumBefore`
 
 **Gap Summary**
 No remaining gaps for PoC scope. The undercharging bug described in the Jul 20 version of this doc ($0.00 billed vs. the correct $13.60) is fixed — the test suite proves it. Volume pricing (e.g. "10% discount above 100 VMs") is deferred post-PoC.
@@ -564,14 +574,15 @@ No remaining gaps for PoC scope. The undercharging bug described in the Jul 20 v
 Daily cost calculation for OpenShift Virtualization workloads (VMs) provisioned through OSAC.
 
 **Acceptance Criteria**
-- ✅ Daily (or even hourly) cost for every resource type (CaaS, VMaaS, etc.) *(`GET /api/v1/reports/costs?resolution=daily` adds date column; 60s metering + 30s rating = sub-90s freshness; hourly/arbitrary ranges supported)*
+- ✅ Daily (or even hourly) cost for every resource type (CaaS, VMaaS, etc.) *(`GET /api/v1/reports/costs?resolution=daily` adds date column; 45s metering + 20s rating = sub-90s freshness; hourly/arbitrary ranges supported)*
 - ✅ VMs on one cluster may span multiple projects/tenants and must be costed separately — at different rates for the same VM type *(per-tenant rate overrides via `tenant_id` on rates; per-instance-type rates via `instance_type` dimension; 4-way fallback in `matchRate`)*
 
 **Current Implementation Status**
 - **Live queries (Jul 22):** `GET /api/v1/reports/costs?resolution=daily` sums `cost_entries` in real time with date grouping; supports `?from=&to=` date filtering, `?group_by=project` / `?group_by=tenant`, `?format=csv` export
 - Per-project/tenant breakdown: all cost entries carry `tenant_id`, `project_id`, `user_id`
 - Per-tenant rate overrides: `matchRate` 4-way fallback (tenant+instance_type > instance_type > tenant > global) gives per-tenant pricing on shared infrastructure
-- 60s metering granularity (configurable via `METERING_INTERVAL`) — sub-minute resolution available
+- 45s metering granularity (configurable via `METERING_INTERVAL`; was 60s) — sub-minute resolution available
+- Report API is OpenAPI-generated (`internal/api`); debug `/reports` UI wired to the same endpoints
 
 **Gap Summary**
 No remaining gaps for PoC scope. Daily cost is satisfied by live queries over `cost_entries`. Possible future improvements: pre-aggregated `daily_cost_summary` table for scale; per-second granularity for neocloud parity (configurable via shorter `METERING_INTERVAL`).
@@ -626,6 +637,8 @@ A handful of open decisions touch multiple requirements above and are the ones m
 | **RBAC model** — Insights RBAC vs. a simpler Keycloak-native tenant/project model | REQ-3a | PoC clarified (Jul 20): project access only, no finer RBAC. Long-term Insights vs Keycloak still open; deferred post-PoC if project-within-tenant lands |
 | **Three-way convergence** — SaaS Cost Management, on-prem Koku, and this OSAC PoC can't stay separate long-term | Cuts across most requirements | EMR meeting expected to set direction; outcome affects RBAC approach and long-term architecture |
 | **Catalog price override by tenant** — can tenants override CSP prices or create their own priced sub-offerings | REQ-3b, REQ-13 | Raised by Moti, no answer from OSAC yet |
+| **Catalog–metering correlation (offering-level)** — versioning, attribution stamps, soft-delete, provisioning-group, billable components | REQ-3b, REQ-5 | **Framed (Jul 21 Moti brief):** Cost preference = OSAC owns identity/attribution/events; Cost owns rate cards. MVP OSAC unblock = attribution + soft-delete + fields on Watch. PoC SKU pricing via `instance_type` does not need this; offering-level reports do |
+| **~~90s E2E sweep headroom~~** — shorten local metering/rating intervals | REQ-1b, REQ-2 | **Resolved (Jul 23):** defaults **45s metering / 20s rating** ([ADR-001](../decisions/001-metering-sweep-interval.md)) |
 | **Wallet vs budget modeling** — prepaid balance must not be an open-ended monetary budget | REQ-14, REQ-9 | **Resolved in spec and code (Jul 20–22):** distinct concepts implemented as separate tables/APIs/deduction pipeline; wallets do not share quota machinery |
 | **Quota/budget source of truth** — OSAC vs RHCM vs third system | REQ-9 | **Closed as "does not matter" (Jul 20):** RHCM implements quotas/CRUD anyway; SOT often decided later via Professional Services |
 | **Project limit overcommit** — may project limits sum above the tenant limit? | REQ-3a, REQ-9 | **Resolved and implemented (Jul 20–21):** no — `validateProjectOvercommit` enforced on create and update |
@@ -637,10 +650,14 @@ A handful of open decisions touch multiple requirements above and are the ones m
 
 | Document | What it covers |
 |---|---|
-| [poc_requirements_overview.md](poc_requirements_overview.md) | Canonical requirements spec (v1.5) — the source for everything above |
-| [implementation-status.md](../implementation-status.md) | Code-link-heavy status tracker (engineering-facing) |
+| [poc_requirements_overview.md](poc_requirements_overview.md) | Canonical requirements spec (v1.5 / v1.6 changelog) — the source for everything above |
+| [implementation-status.md](../implementation-status.md) | Code-link-heavy status tracker (engineering-facing; last header date Jul 20 — lagging this doc on REQ-11 decimal + sweep intervals) |
 | [requirements-comparison.md](requirements-comparison.md) | Older comparison of the spec vs. an earlier implementation snapshot (partially superseded by this doc) |
 | [osac-open-questions.md](osac-open-questions.md) | The consolidated open questions we need OSAC to answer |
+| [catalog-metering-integration-meeting-handoff.md](../../catalog-metering-integration-meeting-handoff.md) | Cost stance + Moti brief prep for catalog–metering correlation (Jul 21) |
+| [ADR-001](../decisions/001-metering-sweep-interval.md) | Metering/rating sweep intervals (45s / 20s) and 90s E2E latency analysis |
+| [ADR-005](../decisions/005-oapi-codegen-spec-first-api.md) | OpenAPI / oapi-codegen as API source of truth |
+| [ADR-006](../decisions/006-event-timestamp-validation.md) | Ingest timestamp validation (billing-period integrity) |
 | [req1 gap analysis](req1-osac-integration-gap-analysis.md) | OSAC integration detail |
 | [req2 gap analysis](req2-maas-costing-gap-analysis.md) | MaaS costing detail |
 | [req8 gap analysis](req8-bare-metal-gap-analysis.md) | Bare metal costing detail |
