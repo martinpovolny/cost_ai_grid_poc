@@ -124,15 +124,62 @@ jobs:
       - name: Check generated code is up to date
         run: cd inventory-watcher && make check-generated
 
-      - name: Check generated code is up to date
-        run: |
-          cd inventory-watcher
-          go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
-          oapi-codegen --config=oapi-codegen.yaml ../docs/openapi.yaml
-          if ! git diff --exit-code internal/api/server.gen.go; then
-            echo "::error::Generated code is stale. Run 'oapi-codegen --config=oapi-codegen.yaml ../docs/openapi.yaml' and commit the result."
-            exit 1
-          fi
+  agent-lint:
+    name: Agent Lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kube-cost-agent
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: kube-cost-agent/go.mod
+          cache-dependency-path: kube-cost-agent/go.sum
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          working-directory: kube-cost-agent
+
+  agent-build:
+    name: Agent Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kube-cost-agent
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: kube-cost-agent/go.mod
+          cache-dependency-path: kube-cost-agent/go.sum
+
+      - name: Build agent
+        run: go build -o /dev/null ./cmd/main.go
+
+  agent-test:
+    name: Agent Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kube-cost-agent
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: kube-cost-agent/go.mod
+          cache-dependency-path: kube-cost-agent/go.sum
+
+      - name: Run tests
+        run: go test -race -count=1 -timeout 60s ./...
 
   container-build:
     name: Container Build

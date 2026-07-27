@@ -176,6 +176,7 @@ type CostEntry struct {
 	Currency        string    `json:"currency"`
 	PeriodStart     time.Time `json:"period_start"`
 	PeriodEnd       time.Time `json:"period_end"`
+	WalletApplied   decimal.Decimal `json:"wallet_applied"`
 }
 
 type QuotaRecord struct {

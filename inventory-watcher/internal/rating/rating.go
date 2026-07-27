@@ -192,9 +192,7 @@ func (r *Rater) DeductWallets(ctx context.Context) {
 		}
 
 		for _, ce := range entries {
-			var applied decimal.Decimal
-			_ = r.store.Pool().QueryRow(ctx, `SELECT wallet_applied FROM cost_entries WHERE id = $1`, ce.ID).Scan(&applied)
-			remaining := ce.CostAmount.Sub(applied)
+			remaining := ce.CostAmount.Sub(ce.WalletApplied)
 			if remaining.IsZero() || remaining.IsNegative() {
 				continue
 			}

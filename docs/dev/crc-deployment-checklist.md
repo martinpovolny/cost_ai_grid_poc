@@ -54,7 +54,7 @@ kubectl get pods -n postgres
 
 - [ ] Create OSAC database credentials (keycloak, service)
 - [ ] Create PostgreSQL TLS certificate
-- [ ] Deploy CNPG Cluster (2 instances)
+- [ ] Deploy CNPG Cluster (1 instance)
 - [ ] Wait for pods ready
 
 **Commands:** See `crc-full-deployment.md` Step 5
@@ -62,7 +62,7 @@ kubectl get pods -n postgres
 **Verification:**
 ```bash
 kubectl get pods -n postgres
-# Expected: 3 pods Running (operator, osac-1, osac-2)
+# Expected: 2 pods Running (operator, osac-1)
 kubectl get cluster -n postgres osac
 # Expected: Instances=2, Ready=true
 ```
