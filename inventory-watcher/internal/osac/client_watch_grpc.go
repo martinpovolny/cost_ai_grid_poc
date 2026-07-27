@@ -27,7 +27,12 @@ func (c *Client) WatchEvents(ctx context.Context, handler func(Event) error) err
 
 	if tlsCfg := c.TLSConfig(); tlsCfg != nil {
 		tlsCopy := tlsCfg.Clone()
-		tlsCopy.NextProtos = []string{"h2"}
+		// The OSAC gRPC server does not advertise h2 in ALPN (confirmed via
+		// openssl s_client: "No ALPN negotiated"). grpc-go ≥1.67 enforces
+		// ALPN by default, which breaks the connection. Setting NextProtos to
+		// nil lets the TLS handshake complete without ALPN negotiation while
+		// still using TLS for transport security.
+		tlsCopy.NextProtos = nil
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsCopy)))
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))

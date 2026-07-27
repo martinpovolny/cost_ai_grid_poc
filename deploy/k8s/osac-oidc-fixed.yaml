@@ -129,7 +129,10 @@ spec:
           command:
             - sh
             - -c
-            - pip install --no-cache-dir cryptography && python3 /scripts/oidc_server.py
+            # Pin cryptography to 42.0.8: newer versions (49+) use CPU
+            # instructions unavailable in CRC's aarch64 VM (Illegal instruction).
+            # HOME=/tmp: pod runs non-root; pip needs a writable home dir.
+            - HOME=/tmp pip install --no-cache-dir "cryptography==42.0.8" && python3 /scripts/oidc_server.py
           env:
             - name: ISSUER
               value: https://osac-oidc.osac.svc:8013
@@ -137,6 +140,8 @@ spec:
               value: /certs
             - name: PYTHONUNBUFFERED
               value: "1"
+            - name: HOME
+              value: /tmp
           ports:
             - containerPort: 8013
           volumeMounts:
