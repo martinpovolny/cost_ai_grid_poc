@@ -385,6 +385,21 @@ CREATE INDEX IF NOT EXISTS idx_ce_unapplied ON cost_entries (tenant_id, period_s
 -- scanned all tenant+meter entries and filtered project_id in the heap.
 CREATE INDEX IF NOT EXISTS idx_me_tenant_project_meter
   ON metering_entries (tenant_id, project_id, meter_name, period_start, period_end);
+
+-- Autovacuum tuning for high-churn tables.
+-- Default threshold (20% dead tuples) is too conservative for tables that
+-- receive mass UPDATEs (metering_entries: rated_at set on every rating sweep)
+-- or bulk DELETEs (raw_events: pruned after archival). At 9M rows and 300
+-- updates/sec the default fires every ~100 minutes; 1% fires every ~5 minutes,
+-- keeping index bloat controlled and planner statistics fresh.
+ALTER TABLE metering_entries SET (
+  autovacuum_vacuum_scale_factor  = 0.01,
+  autovacuum_analyze_scale_factor = 0.005
+);
+ALTER TABLE raw_events SET (
+  autovacuum_vacuum_scale_factor  = 0.01,
+  autovacuum_analyze_scale_factor = 0.005
+);
 `
 
 // InsertRawEvent appends an event to the immutable audit log.
