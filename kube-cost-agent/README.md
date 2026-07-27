@@ -1,135 +1,82 @@
 # kube-cost-agent
-// TODO(user): Add simple overview of use/purpose
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+A lightweight Kubernetes controller that watches billable resources and
+emits CloudEvents to the [cost-event-consumer](../inventory-watcher/) for
+metering, rating, and cost reporting.
 
-## Getting Started
+Complementary to OSAC — tracks what runs *inside* clusters (pods, nodes,
+PVCs, load balancers), not the provisioned capacity from the management plane.
 
-### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+## What it watches
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+| Resource | Event types | Key data |
+|---|---|---|
+| **Pods** | `kube.pod.lifecycle`, `kube.pod.heartbeat` | CPU/memory requests, GPU count, QoS, owner |
+| **Nodes** | `kube.node.lifecycle`, `kube.node.heartbeat` | Instance type, zone, capacity, spot |
+| **PVCs** | `kube.pvc.lifecycle` | Storage class, capacity |
+| **LoadBalancer Services** | `kube.service.lifecycle` | External IPs, port count |
 
-```sh
-make docker-build docker-push IMG=<some-registry>/kube-cost-agent:tag
-```
+All data comes from the Kubernetes API — no Prometheus or metrics-server required.
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+## Configuration
 
-**Install the CRDs into the cluster:**
+Via ConfigMap projected as environment variables:
 
-```sh
-make install
-```
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `COST_CONSUMER_URL` | Yes | — | Consumer ingest endpoint |
+| `COST_CONSUMER_TOKEN` | No | — | Bearer token for auth |
+| `CLUSTER_ID` | Yes | — | Unique cluster identifier |
+| `TENANT_ID` | No | — | Default tenant (empty = namespace name) |
+| `HEARTBEAT_INTERVAL` | No | `60s` | Pod heartbeat period |
+| `NODE_RECONCILE_INTERVAL` | No | `5m` | Node heartbeat period |
+| `BATCH_SIZE` | No | `100` | Max events per HTTP POST |
+| `BATCH_INTERVAL` | No | `5s` | Max delay before flushing |
+| `EXCLUDE_NAMESPACES` | No | `kube-system` | Comma-separated namespaces to skip |
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+## Quick start
 
-```sh
-make deploy IMG=<some-registry>/kube-cost-agent:tag
-```
-
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
+### Build and push
 
 ```sh
-kubectl apply -k config/samples/
+make docker-build docker-push IMG=quay.io/martin_povolny/kube-cost-agent:latest
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
-
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
+### Deploy to a cluster
 
 ```sh
-kubectl delete -k config/samples/
+# Edit config/configmap/kube-cost-agent-config.yaml with your consumer URL and cluster ID
+make deploy IMG=quay.io/martin_povolny/kube-cost-agent:latest
 ```
 
-**Delete the APIs(CRDs) from the cluster:**
+### Run locally (against current kubeconfig)
 
 ```sh
-make uninstall
+export COST_CONSUMER_URL=http://localhost:8020/api/v1/events
+export CLUSTER_ID=local-dev
+make run
 ```
 
-**UnDeploy the controller from the cluster:**
+### Undeploy
 
 ```sh
 make undeploy
 ```
 
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
+## Development
 
 ```sh
-make build-installer IMG=<some-registry>/kube-cost-agent:tag
+make build          # compile binary
+make lint           # golangci-lint (with logcheck plugin)
+make test           # unit tests
+make manifests      # regenerate RBAC from markers
 ```
 
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
+## Design
 
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/kube-cost-agent/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v2-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+See [docs/design.md](docs/design.md) for the full architecture, CloudEvent
+schemas, and consumer-side changes.
 
 ## License
 
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
+Apache License 2.0 — see [LICENSE](../LICENSE).
