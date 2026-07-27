@@ -16,6 +16,8 @@ See `docs/operations/table-sizing.md` for the full scale analysis.
 | `idx_ce_unapplied` — wallet sweep partial index | `8503dd5` |
 | `idx_me_tenant_project_meter` — MeteringSumByProject heap filter | `e3f0545` |
 | DeductWallets N+1 — wallet_applied now in UnappliedCostEntries SELECT | `e3f0545` |
+| Autovacuum tuning — 1% threshold for metering_entries and raw_events | `79e4762` |
+| Ingest timestamp validation — reject events >2h old or >5m future | (other session) |
 
 ---
 
