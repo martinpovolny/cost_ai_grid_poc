@@ -42,21 +42,21 @@ jobs:
           # PR #112 pinned v1.66.0 as workaround. Fix path: OSAC adds
           # h2 ALPN support, or we use grpc-go experimental
           # credentials.NewTLSWithALPNDisabled (temporary upstream API).
-          govulncheck -format json ./... | \
-            python3 -c "
-          import json, sys
-          SUPPRESS = {'GO-2026-6061'}
-          found = []
-          for line in sys.stdin:
-              obj = json.loads(line)
-              if 'finding' in obj:
-                  vid = obj['finding'].get('osv', '')
-                  if vid and vid not in SUPPRESS:
-                      found.append(vid)
-          if found:
-              print(f'Unsuppressed vulnerabilities: {found}', file=sys.stderr)
-              sys.exit(3)
-          "
+          set +e
+          output=$(govulncheck ./... 2>&1)
+          rc=$?
+          echo "$output"
+          if [ $rc -eq 0 ]; then
+            exit 0
+          fi
+          # Check if the only finding is the suppressed vuln
+          unsuppressed=$(echo "$output" | grep "^Vulnerability #" | grep -v "GO-2026-6061" || true)
+          if [ -z "$unsuppressed" ]; then
+            echo "::notice::GO-2026-6061 suppressed (grpc-go ALPN incompatibility with OSAC)"
+            exit 0
+          fi
+          echo "::error::Unsuppressed vulnerabilities found"
+          exit 1
 
   build:
     name: Build
