@@ -27,6 +27,7 @@ import (
 	"github.com/osac-project/cost-event-consumer/internal/osac"
 	"github.com/osac-project/cost-event-consumer/internal/rating"
 	"github.com/osac-project/cost-event-consumer/internal/reconciler"
+	"github.com/osac-project/cost-event-consumer/internal/kafka"
 	"github.com/osac-project/cost-event-consumer/internal/splunk"
 	"github.com/osac-project/cost-event-consumer/internal/watcher"
 )
@@ -137,6 +138,33 @@ func main() {
 		logger.Info("splunk forwarder enabled", "url", cfg.SplunkHECURL, "interval", cfg.SplunkInterval)
 	}
 
+	var kafkaProducer *kafka.Producer
+	if cfg.KafkaBrokers != "" {
+		kafkaCfg := kafka.Config{
+			Brokers:       strings.Split(cfg.KafkaBrokers, ","),
+			ConsumerGroup: cfg.KafkaConsumerGroup,
+			TopicPrefix:   cfg.KafkaTopicPrefix,
+		}
+		var err error
+		kafkaProducer, err = kafka.NewProducer(kafkaCfg, logger)
+		if err != nil {
+			logger.Error("failed to create Kafka producer", "error", err)
+		} else {
+			if w != nil {
+				w.SetKafkaPublisher(kafkaProducer)
+			}
+			logger.Info("kafka producer enabled", "brokers", cfg.KafkaBrokers)
+		}
+
+		kc, err := kafka.NewConsumer(kafkaCfg, nil, logger)
+		if err != nil {
+			logger.Error("failed to create Kafka consumer", "error", err)
+		} else {
+			startComponent("kafka-consumer", func() error { return kc.Run(ctx) })
+			logger.Info("kafka consumer enabled", "brokers", cfg.KafkaBrokers, "group", cfg.KafkaConsumerGroup)
+		}
+	}
+
 	// Metrics server on a separate port (no auth).
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("GET /metrics", promhttp.Handler())
@@ -169,6 +197,9 @@ func main() {
 		h := api.NewAPIHandler(store, m, cfg, cmRegistry, logger)
 		if r != nil {
 			h.SetReconciler(r)
+		}
+		if kafkaProducer != nil {
+			h.SetKafkaPublisher(kafkaProducer)
 		}
 
 		auth, err := authn.New(cfg.AuthIssuerURL, cfg.OSACCACert, logger)

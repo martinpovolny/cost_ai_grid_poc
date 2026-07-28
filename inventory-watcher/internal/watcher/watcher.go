@@ -11,16 +11,25 @@ import (
 	"github.com/osac-project/cost-event-consumer/internal/osac"
 )
 
+// KafkaPublisher publishes events to Kafka topics. Optional — nil means no Kafka.
+type KafkaPublisher interface {
+	PublishEvent(ctx context.Context, eventType, resourceID, tenantID string, payload []byte)
+}
+
 type Watcher struct {
-	client *osac.Client
-	store  *inventory.Store
-	meter  *metering.Meter
-	logger *slog.Logger
+	client         *osac.Client
+	store          *inventory.Store
+	meter          *metering.Meter
+	kafkaPublisher KafkaPublisher
+	logger         *slog.Logger
 }
 
 func New(client *osac.Client, store *inventory.Store, meter *metering.Meter, logger *slog.Logger) *Watcher {
 	return &Watcher{client: client, store: store, meter: meter, logger: logger}
 }
+
+// SetKafkaPublisher sets an optional Kafka producer for publishing events.
+func (w *Watcher) SetKafkaPublisher(p KafkaPublisher) { w.kafkaPublisher = p }
 
 // Run connects to the OSAC event stream and processes events.
 // It reconnects with exponential backoff on disconnection.
@@ -65,6 +74,12 @@ func (w *Watcher) handleEvent(ctx context.Context, event osac.Event) error {
 
 	if err := w.storeRawEvent(ctx, event, resourceType); err != nil {
 		w.logger.Error("failed to store raw event", "error", err, "id", event.ID)
+	}
+
+	if w.kafkaPublisher != nil {
+		resourceID, tenantID, _ := extractEventMeta(event)
+		dataJSON, _ := json.Marshal(event)
+		w.kafkaPublisher.PublishEvent(ctx, event.Type, resourceID, tenantID, dataJSON)
 	}
 
 	switch event.Type {

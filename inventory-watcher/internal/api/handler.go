@@ -54,15 +54,21 @@ type Reconciler interface {
 	ReconcileAll(ctx context.Context)
 }
 
+// KafkaPublisher publishes events to Kafka topics. Optional — nil means no Kafka.
+type KafkaPublisher interface {
+	PublishEvent(ctx context.Context, eventType, resourceID, tenantID string, payload []byte)
+}
+
 // Handler implements the generated ServerInterface with all API business logic.
 type APIHandler struct {
-	store         *inventory.Store
-	meter         *metering.Meter
-	cfg           *config.Config
-	customMetrics *custommetrics.Registry
-	reconciler    Reconciler
-	reconciling   atomic.Bool
-	logger        *slog.Logger
+	store          *inventory.Store
+	meter          *metering.Meter
+	cfg            *config.Config
+	customMetrics  *custommetrics.Registry
+	reconciler     Reconciler
+	kafkaPublisher KafkaPublisher
+	reconciling    atomic.Bool
+	logger         *slog.Logger
 }
 
 // NewHandler constructs a Handler with all required dependencies.
@@ -75,6 +81,9 @@ func NewAPIHandler(store *inventory.Store, meter *metering.Meter, cfg *config.Co
 		logger:        logger,
 	}
 }
+
+// SetKafkaPublisher sets an optional Kafka producer for publishing events.
+func (h *APIHandler) SetKafkaPublisher(p KafkaPublisher) { h.kafkaPublisher = p }
 
 // SetReconciler sets the reconciler for on-demand reconciliation triggers.
 func (h *APIHandler) SetReconciler(r Reconciler) {
@@ -324,6 +333,10 @@ func (h *APIHandler) IngestEvent(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 		writeJSON(w, map[string]string{"status": "duplicate"})
 		return
+	}
+
+	if h.kafkaPublisher != nil {
+		h.kafkaPublisher.PublishEvent(ctx, ce.Type, resourceID, tenantID, fullJSON)
 	}
 
 	var processingErr error
