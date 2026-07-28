@@ -33,6 +33,7 @@ type Config struct {
 	KafkaBrokers       string
 	KafkaConsumerGroup string
 	KafkaTopicPrefix   string
+	KafkaMode          string // "both" (default), "producer", "consumer"
 }
 
 // DiagnosticInfo returns config values safe to expose via the debug API (no secrets).
@@ -131,6 +132,7 @@ func Load() *Config {
 		KafkaBrokers:       os.Getenv("KAFKA_BROKERS"),
 		KafkaConsumerGroup: envOrDefault("KAFKA_CONSUMER_GROUP", "cost-consumer"),
 		KafkaTopicPrefix:   envOrDefault("KAFKA_TOPIC_PREFIX", "osac.metering"),
+		KafkaMode:          envOrDefault("KAFKA_MODE", "both"),
 	}
 }
 

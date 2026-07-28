@@ -140,28 +140,37 @@ func main() {
 
 	var kafkaProducer *kafka.Producer
 	if cfg.KafkaBrokers != "" {
+		kafkaMode := cfg.KafkaMode // "both", "producer", "consumer"
 		kafkaCfg := kafka.Config{
-			Brokers:       strings.Split(cfg.KafkaBrokers, ","),
-			ConsumerGroup: cfg.KafkaConsumerGroup,
-			TopicPrefix:   cfg.KafkaTopicPrefix,
+			Brokers:         strings.Split(cfg.KafkaBrokers, ","),
+			ConsumerGroup:   cfg.KafkaConsumerGroup,
+			TopicPrefix:     cfg.KafkaTopicPrefix,
+			ProducerEnabled: kafkaMode == "both" || kafkaMode == "producer",
+			ConsumerEnabled: kafkaMode == "both" || kafkaMode == "consumer",
 		}
-		var err error
-		kafkaProducer, err = kafka.NewProducer(kafkaCfg, logger)
-		if err != nil {
-			logger.Error("failed to create Kafka producer", "error", err)
-		} else {
-			if w != nil {
-				w.SetKafkaPublisher(kafkaProducer)
+		logger.Info("kafka configured", "brokers", cfg.KafkaBrokers, "mode", kafkaMode)
+
+		if kafkaCfg.ProducerEnabled {
+			var err error
+			kafkaProducer, err = kafka.NewProducer(kafkaCfg, logger)
+			if err != nil {
+				logger.Error("failed to create Kafka producer", "error", err)
+			} else {
+				if w != nil {
+					w.SetKafkaPublisher(kafkaProducer)
+				}
+				logger.Info("kafka producer enabled")
 			}
-			logger.Info("kafka producer enabled", "brokers", cfg.KafkaBrokers)
 		}
 
-		kc, err := kafka.NewConsumer(kafkaCfg, nil, logger)
-		if err != nil {
-			logger.Error("failed to create Kafka consumer", "error", err)
-		} else {
-			startComponent("kafka-consumer", func() error { return kc.Run(ctx) })
-			logger.Info("kafka consumer enabled", "brokers", cfg.KafkaBrokers, "group", cfg.KafkaConsumerGroup)
+		if kafkaCfg.ConsumerEnabled {
+			kc, err := kafka.NewConsumer(kafkaCfg, nil, logger)
+			if err != nil {
+				logger.Error("failed to create Kafka consumer", "error", err)
+			} else {
+				startComponent("kafka-consumer", func() error { return kc.Run(ctx) })
+				logger.Info("kafka consumer enabled", "group", cfg.KafkaConsumerGroup)
+			}
 		}
 	}
 
