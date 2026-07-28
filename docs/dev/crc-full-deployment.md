@@ -68,6 +68,11 @@ helm upgrade cert-manager oci://quay.io/jetstack/charts/cert-manager \
   --wait
 ```
 
+> **Note:** On CRC, `--wait` sometimes hangs for 10–15 minutes even after pods
+> are Ready (Helm's readiness probe races with the CRC VM scheduler). If it
+> hangs past 5 minutes, Ctrl+C — the install succeeded. Verify with
+> `kubectl get pods -n cert-manager`.
+
 ## Step 2: Install trust-manager
 
 ```bash
@@ -240,10 +245,15 @@ spec:
 EOF
 
 # Wait for PostgreSQL cluster
-oc wait pods -n postgres \
-  --selector cnpg.io/podRole=instance,cnpg.io/cluster=osac \
-  --for=condition=Ready \
-  --timeout=300s
+# Poll until ready — oc wait fails if pods don't exist yet (race with CNPG)
+echo "Waiting for CNPG cluster (up to 5 min)..."
+for i in $(seq 1 30); do
+  count=$(oc get pods -n postgres -l cnpg.io/podRole=instance --no-headers 2>/dev/null | grep -c "1/1" || true)
+  echo "  [$(date +%H:%M:%S)] Ready: $count/1"
+  [ "$count" -ge 1 ] && break
+  sleep 10
+done
+oc get cluster -n postgres
 ```
 
 ## Step 6: Deploy OSAC Stack
@@ -252,8 +262,10 @@ oc wait pods -n postgres \
 # Create namespace first
 oc new-project osac
 
-POSTGRES_SERVICE=service
-POSTGRES_PASSWORD=osac-service-dev
+# Export these before the gRPC deployment block below — the <<EOF heredoc
+# interpolates them. Without export the variables are unset in sub-shells.
+export POSTGRES_SERVICE=service
+export POSTGRES_PASSWORD=osac-service-dev
 
 # Create TLS certificates — one for gRPC, one for the OIDC server.
 # IMPORTANT: osac-oidc-tls MUST be separate from osac-grpc-tls.
@@ -891,48 +903,26 @@ no new credential infrastructure is needed.
 server (`osac-oidc.osac.svc:8013`) using OIDC Discovery + JWKS. The
 `/healthz` and `/readyz` endpoints remain open for probes.
 
-### 1. Extend CA bundle to cost-mgmt
+### 1. Extend CA bundle to cost-mgmt (Step 3 already does this)
 
-The consumer needs to reach the OIDC HTTPS endpoint. Extend the trust
-bundle that cert-manager already distributes:
+The `ca-bundle` trust bundle in Step 3 already includes `cost-mgmt` in its
+`namespaceSelector`. The CA bundle ConfigMap and `OSAC_CA_CERT` mount are
+also already in `deploy/k8s/consumer.yaml`. No extra steps needed.
 
+Verify the bundle landed:
 ```bash
-oc patch bundle ca-bundle --type=merge -p='
-{
-  "spec": {
-    "target": {
-      "namespaceSelector": {
-        "matchExpressions": [{
-          "key": "kubernetes.io/metadata.name",
-          "operator": "In",
-          "values": ["osac", "postgres", "cost-mgmt"]
-        }]
-      }
-    }
-  }
-}'
-
-# Wait for the bundle to land
-sleep 5
 oc get configmap ca-bundle -n cost-mgmt -o jsonpath='{.data.bundle\.pem}' | head -1
 # Expected: -----BEGIN CERTIFICATE-----
 ```
 
-### 2. Set auth env vars and mount CA bundle
+### 2. Enable JWT auth
+
+Only `AUTH_ISSUER_URL` needs to be set — the CA cert and volume mount are
+already in the base deployment:
 
 ```bash
 oc set env deployment/cost-event-consumer -n cost-mgmt \
-  AUTH_ISSUER_URL=https://osac-oidc.osac.svc:8013 \
-  OSAC_CA_CERT=/ca-bundle/bundle.pem
-
-oc patch deployment cost-event-consumer -n cost-mgmt --type=strategic -p='
-{
-  "spec": {"template": {"spec": {
-    "containers": [{"name": "consumer",
-      "volumeMounts": [{"name": "ca-bundle", "mountPath": "/ca-bundle"}]}],
-    "volumes": [{"name": "ca-bundle", "configMap": {"name": "ca-bundle"}}]
-  }}}
-}'
+  AUTH_ISSUER_URL=https://osac-oidc.osac.svc:8013
 
 oc rollout status deployment/cost-event-consumer -n cost-mgmt
 ```
