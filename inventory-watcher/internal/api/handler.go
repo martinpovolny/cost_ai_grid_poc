@@ -85,6 +85,53 @@ func NewAPIHandler(store *inventory.Store, meter *metering.Meter, cfg *config.Co
 // SetKafkaPublisher sets an optional Kafka producer for publishing events.
 func (h *APIHandler) SetKafkaPublisher(p KafkaPublisher) { h.kafkaPublisher = p }
 
+// ProcessKafkaEvent implements kafka.EventProcessor. It decodes a CloudEvent
+// from Kafka and runs the same processing pipeline as the HTTP ingest handler.
+func (h *APIHandler) ProcessKafkaEvent(ctx context.Context, topic string, payload []byte) error {
+	var ce cloudEventInternal
+	if err := json.Unmarshal(payload, &ce); err != nil {
+		return fmt.Errorf("kafka: invalid CloudEvent JSON: %w", err)
+	}
+	if ce.ID == "" || ce.Type == "" {
+		return fmt.Errorf("kafka: missing id or type")
+	}
+
+	resourceType, resourceID, tenantID := classifyEvent(ce)
+	fullJSON, _ := json.Marshal(ce)
+
+	inserted, err := h.store.InsertRawEvent(ctx, inventory.RawEvent{
+		EventID:      ce.ID,
+		EventType:    ce.Type,
+		EventSource:  ce.Source,
+		EventTime:    ce.Time,
+		TenantID:     tenantID,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Data:         fullJSON,
+	})
+	if err != nil {
+		return fmt.Errorf("kafka: store raw event: %w", err)
+	}
+	if !inserted {
+		return nil
+	}
+
+	switch ce.Type {
+	case eventTypeComputeInstance:
+		return h.processComputeInstanceEvent(ctx, ce)
+	case eventTypeCluster:
+		return h.processClusterEvent(ctx, ce)
+	case eventTypeModel, eventTypeInferenceTokens:
+		return h.processModelEvent(ctx, ce)
+	default:
+		if h.customMetrics != nil && h.customMetrics.HasEventType(ce.Type) {
+			return h.customMetrics.ProcessEvent(ctx, h.store, ce.Type, ce.Data, ce.Time, h.logger)
+		}
+		h.logger.Warn("kafka: unknown event type", "type", ce.Type)
+	}
+	return nil
+}
+
 // SetReconciler sets the reconciler for on-demand reconciliation triggers.
 func (h *APIHandler) SetReconciler(r Reconciler) {
 	h.reconciler = r
@@ -336,6 +383,7 @@ func (h *APIHandler) IngestEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.kafkaPublisher != nil {
+		h.logger.Info("kafka: publishing event", "type", ce.Type, "id", ce.ID)
 		h.kafkaPublisher.PublishEvent(ctx, ce.Type, resourceID, tenantID, fullJSON)
 	}
 

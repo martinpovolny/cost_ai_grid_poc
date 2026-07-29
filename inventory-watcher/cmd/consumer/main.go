@@ -139,9 +139,11 @@ func main() {
 	}
 
 	var kafkaProducer *kafka.Producer
-	if cfg.KafkaBrokers != "" {
-		kafkaMode := cfg.KafkaMode // "both", "producer", "consumer"
-		kafkaCfg := kafka.Config{
+	var kafkaCfg kafka.Config
+	kafkaEnabled := cfg.KafkaBrokers != ""
+	if kafkaEnabled {
+		kafkaMode := cfg.KafkaMode
+		kafkaCfg = kafka.Config{
 			Brokers:         strings.Split(cfg.KafkaBrokers, ","),
 			ConsumerGroup:   cfg.KafkaConsumerGroup,
 			TopicPrefix:     cfg.KafkaTopicPrefix,
@@ -160,16 +162,6 @@ func main() {
 					w.SetKafkaPublisher(kafkaProducer)
 				}
 				logger.Info("kafka producer enabled")
-			}
-		}
-
-		if kafkaCfg.ConsumerEnabled {
-			kc, err := kafka.NewConsumer(kafkaCfg, nil, logger)
-			if err != nil {
-				logger.Error("failed to create Kafka consumer", "error", err)
-			} else {
-				startComponent("kafka-consumer", func() error { return kc.Run(ctx) })
-				logger.Info("kafka consumer enabled", "group", cfg.KafkaConsumerGroup)
 			}
 		}
 	}
@@ -202,14 +194,26 @@ func main() {
 		}
 	}
 
+	h := api.NewAPIHandler(store, m, cfg, cmRegistry, logger)
+	if r != nil {
+		h.SetReconciler(r)
+	}
+	if kafkaProducer != nil {
+		h.SetKafkaPublisher(kafkaProducer)
+	}
+
+	// Start Kafka consumer if configured (uses handler as event processor).
+	if kafkaEnabled && kafkaCfg.ConsumerEnabled {
+		kc, err := kafka.NewConsumer(kafkaCfg, h, logger)
+		if err != nil {
+			logger.Error("failed to create Kafka consumer", "error", err)
+		} else {
+			startComponent("kafka-consumer", func() error { return kc.Run(ctx) })
+			logger.Info("kafka consumer enabled", "group", cfg.KafkaConsumerGroup)
+		}
+	}
+
 	if cfg.IngestListenAddr != "" {
-		h := api.NewAPIHandler(store, m, cfg, cmRegistry, logger)
-		if r != nil {
-			h.SetReconciler(r)
-		}
-		if kafkaProducer != nil {
-			h.SetKafkaPublisher(kafkaProducer)
-		}
 
 		auth, err := authn.New(cfg.AuthIssuerURL, cfg.OSACCACert, logger)
 		if err != nil {

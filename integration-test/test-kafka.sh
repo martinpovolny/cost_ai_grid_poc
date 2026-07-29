@@ -104,11 +104,23 @@ METRICS_PORT="19003" \
 DISABLE_COMPONENTS="watcher,reconciler,metering,rating" \
 "$WATCHER_BIN" > /tmp/kafka-producer-test.log 2>&1 &
 PRODUCER_PID=$!
-sleep 3
+
+# Wait for the HTTP server to be ready (up to 30s)
+for i in $(seq 1 30); do
+    if curl -sf http://localhost:18023/healthz > /dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
 
 if ! kill -0 $PRODUCER_PID 2>/dev/null; then
     echo "ERROR: producer process died"
-    cat /tmp/kafka-producer-test.log
+    tail -20 /tmp/kafka-producer-test.log
+    exit 1
+fi
+if ! curl -sf http://localhost:18023/healthz > /dev/null 2>&1; then
+    echo "ERROR: producer HTTP not ready after 30s"
+    tail -20 /tmp/kafka-producer-test.log
     exit 1
 fi
 echo "  Producer started (PID $PRODUCER_PID)"
@@ -137,12 +149,12 @@ HTTP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
 check "HTTP ingest accepted" "204" "$HTTP_STATUS"
 
 # Wait for async Kafka produce
-sleep 3
+sleep 5
 
 # Check Kafka topic for the event
-KAFKA_COUNT=$(rpk topic consume osac.metering.inference \
-    --brokers "$BROKER" --offset start --num 10 2>/dev/null | \
-    grep -c "$EVENT_ID" || echo "0")
+timeout 10 rpk topic consume osac.metering.inference \
+    --brokers "$BROKER" -o start -n 1 -f '%v\n' > /tmp/kafka-inference-out.txt 2>/dev/null || true
+KAFKA_COUNT=$(grep -c "$EVENT_ID" /tmp/kafka-inference-out.txt 2>/dev/null || echo "0")
 check_ge "Event on Kafka inference topic" 1 "$KAFKA_COUNT"
 
 # Send a VM heartbeat CloudEvent
@@ -165,11 +177,11 @@ curl -s -o /dev/null \
             \"memory_gib\": 8
         }
     }"
-sleep 3
+sleep 5
 
-VM_KAFKA_COUNT=$(rpk topic consume osac.metering.heartbeat \
-    --brokers "$BROKER" --offset start --num 10 2>/dev/null | \
-    grep -c "$VM_EVENT_ID" || echo "0")
+timeout 10 rpk topic consume osac.metering.heartbeat \
+    --brokers "$BROKER" -o start -n 1 -f '%v\n' > /tmp/kafka-heartbeat-out.txt 2>/dev/null || true
+VM_KAFKA_COUNT=$(grep -c "$VM_EVENT_ID" /tmp/kafka-heartbeat-out.txt 2>/dev/null || echo "0")
 check_ge "VM event on Kafka heartbeat topic" 1 "$VM_KAFKA_COUNT"
 
 kill $PRODUCER_PID 2>/dev/null; wait $PRODUCER_PID 2>/dev/null || true
@@ -186,23 +198,8 @@ db_query "DELETE FROM metering_entries WHERE resource_id LIKE 'kafka-consumer-%'
 
 # Produce a test event directly to Kafka
 CONSUMER_EVENT_ID="kafka-consumer-test-$(date +%s)"
-echo "{
-    \"specversion\": \"1.0\",
-    \"type\": \"osac.model.lifecycle\",
-    \"source\": \"kafka-consumer-test\",
-    \"id\": \"$CONSUMER_EVENT_ID\",
-    \"time\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
-    \"data\": {
-        \"tenant_id\": \"kafka-consumer-tenant\",
-        \"model_id\": \"kafka-consumer-model\",
-        \"model_name\": \"test-model\",
-        \"state\": \"MODEL_STATE_RUNNING\",
-        \"tokens_in\": 5000,
-        \"tokens_out\": 2000,
-        \"requests\": 10,
-        \"duration_seconds\": 30
-    }
-}" | rpk topic produce osac.metering.inference --brokers "$BROKER" 2>/dev/null
+CONSUMER_EVENT="{\"specversion\":\"1.0\",\"type\":\"osac.model.lifecycle\",\"source\":\"kafka-consumer-test\",\"id\":\"$CONSUMER_EVENT_ID\",\"time\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"data\":{\"tenant_id\":\"kafka-consumer-tenant\",\"model_id\":\"kafka-consumer-model\",\"model_name\":\"test-model\",\"state\":\"MODEL_STATE_RUNNING\",\"tokens_in\":5000,\"tokens_out\":2000,\"requests\":10,\"duration_seconds\":30}}"
+echo "$CONSUMER_EVENT" | rpk topic produce osac.metering.inference --brokers "$BROKER" 2>/dev/null
 echo "  Test event produced to Kafka"
 
 # Start consumer in consumer-only mode
@@ -215,7 +212,16 @@ METRICS_PORT="19004" \
 DISABLE_COMPONENTS="watcher,reconciler" \
 "$WATCHER_BIN" > /tmp/kafka-consumer-test.log 2>&1 &
 CONSUMER_PID=$!
-sleep 8
+
+# Wait for readiness (up to 30s)
+for i in $(seq 1 30); do
+    if curl -sf http://localhost:18024/healthz > /dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+# Give the Kafka consumer time to poll + process
+sleep 5
 
 if ! kill -0 $CONSUMER_PID 2>/dev/null; then
     echo "ERROR: consumer process died"

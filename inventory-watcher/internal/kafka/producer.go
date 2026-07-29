@@ -47,6 +47,12 @@ func (p *Producer) Publish(ctx context.Context, topic, key string, value []byte)
 				"key", string(r.Key),
 				"err", err,
 			)
+		} else {
+			p.logger.Info("kafka publish success",
+				"topic", r.Topic,
+				"partition", r.Partition,
+				"offset", r.Offset,
+			)
 		}
 	})
 }
