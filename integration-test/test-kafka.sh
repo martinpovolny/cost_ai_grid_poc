@@ -7,9 +7,9 @@ set -uo pipefail
 #   2. Consumer mode: Kafka topics → metering pipeline
 #
 # Prerequisites:
-#   - Redpanda running: docker compose -f deploy/docker-compose-redpanda.yaml up -d
-#   - cost-db running on port 5434
-#   - rpk installed (comes with Redpanda, or: brew install redpanda-data/tap/redpanda)
+#   - Redpanda running on $BROKER (default localhost:19092)
+#   - Postgres on localhost:5434
+#   - rpk CLI available (brew install redpanda-data/tap/redpanda)
 #
 # Usage:
 #   bash integration-test/test-kafka.sh
@@ -57,7 +57,10 @@ db_query() {
     fi
 }
 
+RPK="rpk --brokers $BROKER"
+
 echo "=== Kafka Integration Test ==="
+echo "  broker: $BROKER"
 echo ""
 
 # ── Preflight ──
@@ -70,35 +73,31 @@ if [ ! -f "$WATCHER_BIN" ]; then
     }
 fi
 
-# Check Redpanda
-rpk cluster info --brokers "$BROKER" > /dev/null 2>&1 || {
+$RPK cluster info > /dev/null 2>&1 || {
     echo "ERROR: Redpanda not reachable at $BROKER"
-    echo "Start it: docker compose -f deploy/docker-compose-redpanda.yaml up -d"
     exit 1
 }
 echo "  Redpanda: OK"
 
-# Check cost-db
 db_query "SELECT 1" > /dev/null 2>&1 || {
     echo "ERROR: Postgres not reachable"
     exit 1
 }
-echo "  cost-db: OK"
+echo "  Postgres: OK"
 
 # Create/reset topics
 for topic in osac.metering.lifecycle osac.metering.heartbeat osac.metering.inference; do
-    rpk topic delete "$topic" --brokers "$BROKER" 2>/dev/null || true
-    rpk topic create "$topic" --brokers "$BROKER" 2>/dev/null
+    $RPK topic delete "$topic" 2>/dev/null || true
+    $RPK topic create "$topic" 2>/dev/null
 done
 echo "  Topics created"
 
 # ──────────────────────────────────────────────────────────────────────
-# Test 1: Producer mode — OSAC events → Kafka
+# Test 1: Producer mode — HTTP ingest → Kafka
 # ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "--- Test 1: Producer mode (HTTP ingest → Kafka) ---"
 
-# Start consumer in producer-only mode
 KAFKA_BROKERS="$BROKER" \
 KAFKA_MODE="producer" \
 INVENTORY_DB_URL="postgres://user:pass@localhost:5434/$DB_NAME" \
@@ -108,82 +107,40 @@ DISABLE_COMPONENTS="watcher,reconciler,metering,rating" \
 "$WATCHER_BIN" > /tmp/kafka-producer-test.log 2>&1 &
 PRODUCER_PID=$!
 
-# Wait for the HTTP server to be ready (up to 30s)
 for i in $(seq 1 30); do
-    if curl -sf http://localhost:18023/healthz > /dev/null 2>&1; then
-        break
-    fi
+    curl -sf http://localhost:18023/healthz > /dev/null 2>&1 && break
     sleep 1
 done
-
-if ! kill -0 $PRODUCER_PID 2>/dev/null; then
-    echo "ERROR: producer process died"
-    tail -20 /tmp/kafka-producer-test.log
-    exit 1
-fi
 if ! curl -sf http://localhost:18023/healthz > /dev/null 2>&1; then
-    echo "ERROR: producer HTTP not ready after 30s"
+    echo "ERROR: producer not ready after 30s"
     tail -20 /tmp/kafka-producer-test.log
+    kill $PRODUCER_PID 2>/dev/null
     exit 1
 fi
 echo "  Producer started (PID $PRODUCER_PID)"
 
-# Send a MaaS CloudEvent via HTTP
+# Send MaaS event
 EVENT_ID="kafka-test-maas-$(date +%s)"
 HTTP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
     -X POST "http://localhost:18023/api/v1/events" \
     -H "Content-Type: application/json" \
-    -d "{
-        \"specversion\": \"1.0\",
-        \"type\": \"inference.tokens.used\",
-        \"source\": \"kafka-test\",
-        \"id\": \"$EVENT_ID\",
-        \"time\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
-        \"data\": {
-            \"tenant_id\": \"kafka-test-tenant\",
-            \"model_id\": \"test-model\",
-            \"model\": \"test-model\",
-            \"prompt_tokens\": 1000,
-            \"completion_tokens\": 500,
-            \"total_tokens\": 1500,
-            \"duration_ms\": 200
-        }
-    }")
+    -d "{\"specversion\":\"1.0\",\"type\":\"inference.tokens.used\",\"source\":\"kafka-test\",\"id\":\"$EVENT_ID\",\"time\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"data\":{\"tenant_id\":\"kafka-test-tenant\",\"model_id\":\"test-model\",\"model\":\"test-model\",\"prompt_tokens\":1000,\"completion_tokens\":500,\"total_tokens\":1500,\"duration_ms\":200}}")
 check "HTTP ingest accepted" "204" "$HTTP_STATUS"
-
-# Wait for async Kafka produce
 sleep 5
 
-# Check Kafka topic for the event
-timeout 10 rpk topic consume osac.metering.inference \
-    --brokers "$BROKER" -o start -n 1 -f '%v\n' > /tmp/kafka-inference-out.txt 2>/dev/null || true
+timeout 15 $RPK topic consume osac.metering.inference -o start -n 1 -f '%v\n' > /tmp/kafka-inference-out.txt 2>/dev/null
 KAFKA_COUNT=$(grep -c "$EVENT_ID" /tmp/kafka-inference-out.txt 2>/dev/null || echo "0")
 check_ge "Event on Kafka inference topic" 1 "$KAFKA_COUNT"
 
-# Send a VM heartbeat CloudEvent
+# Send VM heartbeat event
 VM_EVENT_ID="kafka-test-vm-$(date +%s)"
 curl -s -o /dev/null \
     -X POST "http://localhost:18023/api/v1/events" \
     -H "Content-Type: application/json" \
-    -d "{
-        \"specversion\": \"1.0\",
-        \"type\": \"osac.compute_instance.lifecycle\",
-        \"source\": \"kafka-test\",
-        \"id\": \"$VM_EVENT_ID\",
-        \"time\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
-        \"data\": {
-            \"duration_seconds\": 60,
-            \"tenant_id\": \"kafka-test-tenant\",
-            \"instance_id\": \"vm-kafka-test\",
-            \"state\": \"COMPUTE_INSTANCE_STATE_RUNNING\",
-            \"cores\": 4,
-            \"memory_gib\": 8
-        }
-    }"
+    -d "{\"specversion\":\"1.0\",\"type\":\"osac.compute_instance.lifecycle\",\"source\":\"kafka-test\",\"id\":\"$VM_EVENT_ID\",\"time\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"data\":{\"duration_seconds\":60,\"tenant_id\":\"kafka-test-tenant\",\"instance_id\":\"vm-kafka-test\",\"state\":\"COMPUTE_INSTANCE_STATE_RUNNING\",\"cores\":4,\"memory_gib\":8}}"
 sleep 5
 
-timeout 10 rpk topic consume osac.metering.heartbeat \
-    --brokers "$BROKER" -o start -n 1 -f '%v\n' > /tmp/kafka-heartbeat-out.txt 2>/dev/null || true
+timeout 15 $RPK topic consume osac.metering.heartbeat -o start -n 1 -f '%v\n' > /tmp/kafka-heartbeat-out.txt 2>/dev/null
 VM_KAFKA_COUNT=$(grep -c "$VM_EVENT_ID" /tmp/kafka-heartbeat-out.txt 2>/dev/null || echo "0")
 check_ge "VM event on Kafka heartbeat topic" 1 "$VM_KAFKA_COUNT"
 
@@ -196,16 +153,13 @@ echo "  Producer stopped"
 echo ""
 echo "--- Test 2: Consumer mode (Kafka → metering) ---"
 
-# Clean DB for consumer test
 db_query "DELETE FROM metering_entries WHERE resource_id LIKE 'kafka-consumer-%';" > /dev/null 2>&1
 
-# Produce a test event directly to Kafka
 CONSUMER_EVENT_ID="kafka-consumer-test-$(date +%s)"
-CONSUMER_EVENT="{\"specversion\":\"1.0\",\"type\":\"osac.model.lifecycle\",\"source\":\"kafka-consumer-test\",\"id\":\"$CONSUMER_EVENT_ID\",\"time\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"data\":{\"tenant_id\":\"kafka-consumer-tenant\",\"model_id\":\"kafka-consumer-model\",\"model_name\":\"test-model\",\"state\":\"MODEL_STATE_RUNNING\",\"tokens_in\":5000,\"tokens_out\":2000,\"requests\":10,\"duration_seconds\":30}}"
-echo "$CONSUMER_EVENT" | rpk topic produce osac.metering.inference --brokers "$BROKER" 2>/dev/null
+echo "{\"specversion\":\"1.0\",\"type\":\"osac.model.lifecycle\",\"source\":\"kafka-consumer-test\",\"id\":\"$CONSUMER_EVENT_ID\",\"time\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"data\":{\"tenant_id\":\"kafka-consumer-tenant\",\"model_id\":\"kafka-consumer-model\",\"model_name\":\"test-model\",\"state\":\"MODEL_STATE_RUNNING\",\"tokens_in\":5000,\"tokens_out\":2000,\"requests\":10,\"duration_seconds\":30}}" | \
+    $RPK topic produce osac.metering.inference 2>/dev/null
 echo "  Test event produced to Kafka"
 
-# Start consumer in consumer-only mode
 KAFKA_BROKERS="$BROKER" \
 KAFKA_MODE="consumer" \
 KAFKA_CONSUMER_GROUP="test-consumer-$(date +%s)" \
@@ -216,14 +170,10 @@ DISABLE_COMPONENTS="watcher,reconciler" \
 "$WATCHER_BIN" > /tmp/kafka-consumer-test.log 2>&1 &
 CONSUMER_PID=$!
 
-# Wait for readiness (up to 30s)
 for i in $(seq 1 30); do
-    if curl -sf http://localhost:18024/healthz > /dev/null 2>&1; then
-        break
-    fi
+    curl -sf http://localhost:18024/healthz > /dev/null 2>&1 && break
     sleep 1
 done
-# Give the Kafka consumer time to poll + process
 sleep 5
 
 if ! kill -0 $CONSUMER_PID 2>/dev/null; then
@@ -233,11 +183,9 @@ if ! kill -0 $CONSUMER_PID 2>/dev/null; then
 fi
 echo "  Consumer started (PID $CONSUMER_PID)"
 
-# Check if the event was consumed and stored
 RAW_COUNT=$(db_query "SELECT count(*) FROM raw_events WHERE event_id = '$CONSUMER_EVENT_ID';")
 check "Raw event stored from Kafka" "1" "$RAW_COUNT"
 
-# Check metering entries
 ME_COUNT=$(db_query "SELECT count(*) FROM metering_entries WHERE resource_id = 'kafka-consumer-model';")
 check_ge "Metering entries from Kafka event" 3 "$ME_COUNT"
 
@@ -251,7 +199,6 @@ TOTAL=$((PASS + FAIL))
 echo "  Results: $PASS/$TOTAL passed"
 if [ "$FAIL" -gt 0 ]; then
     echo -e "  ${RED}$FAIL FAILED${NC}"
-    echo ""
     echo "  Producer log: /tmp/kafka-producer-test.log"
     echo "  Consumer log: /tmp/kafka-consumer-test.log"
     exit 1

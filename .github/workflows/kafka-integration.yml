@@ -63,8 +63,14 @@ jobs:
               --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092 \
               --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092 \
               --smp 1 --memory 256M --overprovisioned --default-log-level=warn
+
+      - name: Install rpk and wait for Redpanda
+        run: |
+          curl -sLO https://github.com/redpanda-data/redpanda/releases/latest/download/rpk-linux-amd64.zip
+          unzip -o rpk-linux-amd64.zip -d /tmp/rpk
+          sudo mv /tmp/rpk/rpk /usr/local/bin/rpk
           for i in $(seq 1 30); do
-            docker exec redpanda rpk cluster info && break || sleep 2
+            rpk cluster info --brokers localhost:19092 && break || sleep 2
           done
 
       - name: Build consumer
