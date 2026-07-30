@@ -47,11 +47,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 WATCHER_BIN="$REPO_DIR/inventory-watcher/inventory-watcher"
 BROKER="localhost:19092"
-DB_CONTAINER=cost-db
 DB_NAME=costdb
 
 db_query() {
-    docker exec "$DB_CONTAINER" psql -U user -d "$DB_NAME" -t -A -c "$1" 2>/dev/null
+    if command -v psql > /dev/null 2>&1; then
+        PGPASSWORD=pass psql -h localhost -p 5434 -U user -d "$DB_NAME" -t -A -c "$1" 2>/dev/null
+    else
+        docker exec cost-db psql -U user -d "$DB_NAME" -t -A -c "$1" 2>/dev/null
+    fi
 }
 
 echo "=== Kafka Integration Test ==="
@@ -76,8 +79,8 @@ rpk cluster info --brokers "$BROKER" > /dev/null 2>&1 || {
 echo "  Redpanda: OK"
 
 # Check cost-db
-docker exec "$DB_CONTAINER" psql -U user -d "$DB_NAME" -c "SELECT 1" > /dev/null 2>&1 || {
-    echo "ERROR: cost-db not reachable"
+db_query "SELECT 1" > /dev/null 2>&1 || {
+    echo "ERROR: Postgres not reachable"
     exit 1
 }
 echo "  cost-db: OK"

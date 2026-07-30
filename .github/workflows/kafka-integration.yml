@@ -47,25 +47,6 @@ jobs:
           --health-timeout=5s
           --health-retries=5
 
-      redpanda:
-        image: redpandadata/redpanda:latest
-        ports:
-          - 19092:19092
-        options: >-
-          --health-cmd "rpk cluster health --exit-when-healthy"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-        env:
-          REDPANDA_ARGS: >-
-            redpanda start
-            --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
-            --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
-            --smp 1
-            --memory 256M
-            --overprovisioned
-            --default-log-level=warn
-
     steps:
       - uses: actions/checkout@v7
 
@@ -74,30 +55,32 @@ jobs:
           go-version-file: inventory-watcher/go.mod
           cache-dependency-path: inventory-watcher/go.sum
 
+      - name: Start Redpanda
+        run: |
+          docker run -d --name redpanda \
+            -p 19092:19092 -p 18081:8081 \
+            redpandadata/redpanda:latest \
+            redpanda start \
+              --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092 \
+              --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092 \
+              --smp 1 --memory 256M --overprovisioned --default-log-level=warn
+          echo "Waiting for Redpanda..."
+          for i in $(seq 1 30); do
+            docker exec redpanda rpk cluster info && break
+            sleep 2
+          done
+
       - name: Install rpk
         run: |
           curl -LO https://github.com/redpanda-data/redpanda/releases/latest/download/rpk-linux-amd64.zip
           unzip rpk-linux-amd64.zip -d /tmp/rpk
           sudo mv /tmp/rpk/rpk /usr/local/bin/rpk
-          rpk version
+          rpk cluster info --brokers localhost:19092
 
       - name: Build consumer
         run: |
           cd inventory-watcher
           go build -o inventory-watcher ./cmd/consumer/
-
-      - name: Wait for services
-        run: |
-          echo "Waiting for Redpanda..."
-          for i in $(seq 1 30); do
-            rpk cluster info --brokers localhost:19092 && break
-            sleep 2
-          done
-          echo "Waiting for Postgres..."
-          for i in $(seq 1 15); do
-            pg_isready -h localhost -p 5434 -U user && break
-            sleep 2
-          done
 
       - name: Run Kafka integration test
         run: bash integration-test/test-kafka.sh
@@ -110,3 +93,6 @@ jobs:
           echo ""
           echo "=== Consumer log ==="
           cat /tmp/kafka-consumer-test.log || true
+          echo ""
+          echo "=== Redpanda log ==="
+          docker logs redpanda --tail 30 || true
