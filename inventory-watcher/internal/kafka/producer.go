@@ -23,6 +23,7 @@ func NewProducer(cfg Config, logger *slog.Logger) (*Producer, error) {
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(cfg.Brokers...),
 		kgo.AllowAutoTopicCreation(),
+		kgo.DisableIdempotentWrite(),
 		kgo.ProducerBatchCompression(kgo.SnappyCompression()),
 	)
 	if err != nil {
