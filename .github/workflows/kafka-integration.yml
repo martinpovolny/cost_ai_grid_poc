@@ -56,26 +56,9 @@ jobs:
           cache-dependency-path: inventory-watcher/go.sum
 
       - name: Start Redpanda
-        run: |
-          docker run -d --name redpanda \
-            -p 19092:19092 -p 18081:8081 \
-            redpandadata/redpanda:latest \
-            redpanda start \
-              --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092 \
-              --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092 \
-              --smp 1 --memory 256M --overprovisioned --default-log-level=warn
-          echo "Waiting for Redpanda..."
-          for i in $(seq 1 30); do
-            docker exec redpanda rpk cluster info && break
-            sleep 2
-          done
-
-      - name: Install rpk
-        run: |
-          curl -LO https://github.com/redpanda-data/redpanda/releases/latest/download/rpk-linux-amd64.zip
-          unzip rpk-linux-amd64.zip -d /tmp/rpk
-          sudo mv /tmp/rpk/rpk /usr/local/bin/rpk
-          rpk cluster info --brokers localhost:19092
+        uses: redpanda-data/github-action@v0.1.4
+        with:
+          version: 'latest'
 
       - name: Build consumer
         run: |
@@ -83,6 +66,8 @@ jobs:
           go build -o inventory-watcher ./cmd/consumer/
 
       - name: Run Kafka integration test
+        env:
+          KAFKA_BROKER_OVERRIDE: localhost:9092
         run: bash integration-test/test-kafka.sh
 
       - name: Dump logs on failure
@@ -93,6 +78,3 @@ jobs:
           echo ""
           echo "=== Consumer log ==="
           cat /tmp/kafka-consumer-test.log || true
-          echo ""
-          echo "=== Redpanda log ==="
-          docker logs redpanda --tail 30 || true

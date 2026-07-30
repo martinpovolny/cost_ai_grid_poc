@@ -46,7 +46,7 @@ check_ge() {
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 WATCHER_BIN="$REPO_DIR/inventory-watcher/inventory-watcher"
-BROKER="localhost:19092"
+BROKER="${KAFKA_BROKER_OVERRIDE:-localhost:19092}"
 DB_NAME=costdb
 
 db_query() {
