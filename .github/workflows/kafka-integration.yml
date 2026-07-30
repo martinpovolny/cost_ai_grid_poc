@@ -59,9 +59,9 @@ jobs:
         run: |
           docker run -d --name redpanda -p 19092:19092 \
             redpandadata/redpanda:latest \
-            redpanda start \
+            redpanda start --mode dev-container \
               --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092 \
-              --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092 \
+              --advertise-kafka-addr internal://redpanda:9092,external://127.0.0.1:19092 \
               --smp 1 --memory 256M --overprovisioned --default-log-level=warn
 
       - name: Install rpk and wait for Redpanda
@@ -70,7 +70,7 @@ jobs:
           unzip -o rpk-linux-amd64.zip -d /tmp/rpk
           sudo mv /tmp/rpk/rpk /usr/local/bin/rpk
           for i in $(seq 1 30); do
-            rpk cluster info --brokers localhost:19092 && break || sleep 2
+            rpk cluster info --brokers 127.0.0.1:19092 && break || sleep 2
           done
 
       - name: Build consumer
@@ -79,6 +79,8 @@ jobs:
           go build -o inventory-watcher ./cmd/consumer/
 
       - name: Run Kafka integration test
+        env:
+          KAFKA_BROKER_OVERRIDE: 127.0.0.1:19092
         run: bash integration-test/test-kafka.sh
 
       - name: Dump logs on failure
