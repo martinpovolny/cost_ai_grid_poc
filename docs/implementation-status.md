@@ -331,7 +331,7 @@ full evaluation.
 ## MUST HAVE Requirements
 
 ### REQ-11 — Cost Tiers
-**Status:** Partial
+**Status:** Done
 **Gap Analysis:** [req11-cost-tiers-gap-analysis.md](requirements/req11-cost-tiers-gap-analysis.md)
 **Design Proposal:** [req11-cumulative-tiers-design-proposal.md](requirements/req11-cumulative-tiers-design-proposal.md)
 **Spec:** [poc_requirements_overview.md#req-11](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-11--cost-tiers)
@@ -348,7 +348,7 @@ full evaluation.
 | Capacity cumulative tiers (GiB-month, core-hours) | Done | `tier_mode="cumulative"` + `tier_period`; `ApplyRateCumulative` with `MeteringSumBefore` (PRs #68, #74) |
 | Time-windowed MaaS tiers (e.g. every 5h/24h) | Done | Same cumulative engine with `tier_period="5h"` etc.; `ResolvePeriod` supports Nh/Nd (PR #76) |
 | Tier config without code changes | Done | JSON in `rates` table; no recompile needed |
-| Exact decimal money (not float64) | **Gap** | New in v1.5 — `float64` used for prices/costs; need `shopspring/decimal` or similar |
+| Exact decimal money (not float64) | Done | `shopspring/decimal` for `PricePerUnit`, `CostAmount`, `Tier.PricePerUnit`, wallet balances (PR #84) |
 
 ---
 
@@ -379,6 +379,30 @@ ranges, any grouping) but may be slower at scale.
   per-minute or per-second billing. Our 60s metering sweep supports
   per-minute naturally. Per-second would need a shorter sweep interval
   (configurable via `METERING_INTERVAL`).
+
+### REQ-14 — Wallets (Prepaid Balance)
+**Status:** Done
+**Spec:** [wallet-spec-draft.md](poc_architecture/boundary_monitoring/wallet-spec-draft.md)
+**Spec:** [poc_requirements_overview.md#req-14](https://github.com/myersCody/cost_ai_grid_poc/blob/main/docs/requirements/poc_requirements_overview.md#req-14-wallets-prepaid-balance)
+
+| Acceptance Criterion | Status | Implementation |
+|---|---|---|
+| Create, top up, query wallet balances (tenant) | Done | `POST /api/v1/wallets`, `POST .../top-ups`, `GET /api/v1/wallets/{id}` |
+| Project-scoped wallets | Deferred | `project_id` column exists; deduction routing not built (stretch) |
+| Metered cost deducted as spend accrues | Done | `DeductWallets` runs after every rating sweep; FIFO, partial deduction, resume after top-up |
+| Query remaining balance / % remaining | Done | Status API returns `balance`, `remaining_pct`, `balance_status`, `within_balance`, threshold flags |
+| Low-balance thresholds trigger alerts | Partial | Threshold flags in pull response; push alerts depend on REQ-10 unparking |
+| Wallet operations auditable | Done | `wallet_ledger_entries` table; `GET .../ledger` paginated query |
+| Negative adjustments (disputes, corrections) | Done | `AdjustWallet` — modifies balance only, not `reference_balance`; reason field (PR #95) |
+| Idempotent top-ups | Done | Duplicate `external_ref` rejected |
+| `frozen` lifecycle state | Gap | Spec says "no deductions while frozen" but doesn't define freeze/unfreeze API or rules for top-ups/adjustments — needs product input |
+| `reversal` entry type | Gap | Listed in spec schema but semantics undefined |
+
+**Key implementation details:**
+- **Decimal precision:** all wallet monetary fields use `shopspring/decimal` (`NUMERIC(18,6)` in Postgres)
+- **Wallet IDs:** UUID via `google/uuid`
+- **Deduction mechanics:** `cost_entries.wallet_applied` tracks partial deduction; `DeductWallets` respects `balance_floor`; costs for tenants without wallets stay on the postpaid path
+- **`reference_balance`:** cumulative total of all top-ups (not adjustments); used as denominator for `remaining_pct = (balance / reference_balance) × 100`
 
 ---
 
