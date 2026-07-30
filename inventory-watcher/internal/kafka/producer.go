@@ -35,13 +35,16 @@ func NewProducer(cfg Config, logger *slog.Logger) (*Producer, error) {
 
 // Publish sends a raw key/value pair to the given topic asynchronously.
 // Errors are logged but not propagated.
-func (p *Producer) Publish(ctx context.Context, topic, key string, value []byte) {
+func (p *Producer) Publish(_ context.Context, topic, key string, value []byte) {
 	rec := &kgo.Record{
 		Topic: topic,
 		Key:   []byte(key),
 		Value: value,
 	}
-	p.client.Produce(ctx, rec, func(r *kgo.Record, err error) {
+	// Use background context — the produce must outlive the HTTP request
+	// that triggered it. The producer is fire-and-forget; cancellation is
+	// handled by Close() which flushes pending records.
+	p.client.Produce(context.Background(), rec, func(r *kgo.Record, err error) {
 		if err != nil {
 			p.logger.Error("kafka publish failed",
 				"topic", r.Topic,
