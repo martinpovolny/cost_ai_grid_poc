@@ -30,6 +30,10 @@ type Config struct {
 	SplunkIndex        string
 	SplunkInterval     time.Duration
 	SplunkTLSInsecure  bool
+	KafkaBrokers       string
+	KafkaConsumerGroup string
+	KafkaTopicPrefix   string
+	KafkaMode          string // "both" (default), "producer", "consumer"
 }
 
 // DiagnosticInfo returns config values safe to expose via the debug API (no secrets).
@@ -125,6 +129,10 @@ func Load() *Config {
 		SplunkIndex:        os.Getenv("SPLUNK_INDEX"),
 		SplunkInterval:     durationOrDefault("SPLUNK_INTERVAL", 10*time.Second),
 		SplunkTLSInsecure:  os.Getenv("SPLUNK_TLS_INSECURE") == "true",
+		KafkaBrokers:       os.Getenv("KAFKA_BROKERS"),
+		KafkaConsumerGroup: envOrDefault("KAFKA_CONSUMER_GROUP", "cost-consumer"),
+		KafkaTopicPrefix:   envOrDefault("KAFKA_TOPIC_PREFIX", "osac.metering"),
+		KafkaMode:          envOrDefault("KAFKA_MODE", "both"),
 	}
 }
 

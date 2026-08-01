@@ -27,6 +27,7 @@ import (
 	"github.com/osac-project/cost-event-consumer/internal/osac"
 	"github.com/osac-project/cost-event-consumer/internal/rating"
 	"github.com/osac-project/cost-event-consumer/internal/reconciler"
+	"github.com/osac-project/cost-event-consumer/internal/kafka"
 	"github.com/osac-project/cost-event-consumer/internal/splunk"
 	"github.com/osac-project/cost-event-consumer/internal/watcher"
 )
@@ -137,6 +138,34 @@ func main() {
 		logger.Info("splunk forwarder enabled", "url", cfg.SplunkHECURL, "interval", cfg.SplunkInterval)
 	}
 
+	var kafkaProducer *kafka.Producer
+	var kafkaCfg kafka.Config
+	kafkaEnabled := cfg.KafkaBrokers != ""
+	if kafkaEnabled {
+		kafkaMode := cfg.KafkaMode
+		kafkaCfg = kafka.Config{
+			Brokers:         strings.Split(cfg.KafkaBrokers, ","),
+			ConsumerGroup:   cfg.KafkaConsumerGroup,
+			TopicPrefix:     cfg.KafkaTopicPrefix,
+			ProducerEnabled: kafkaMode == "both" || kafkaMode == "producer",
+			ConsumerEnabled: kafkaMode == "both" || kafkaMode == "consumer",
+		}
+		logger.Info("kafka configured", "brokers", cfg.KafkaBrokers, "mode", kafkaMode)
+
+		if kafkaCfg.ProducerEnabled {
+			var err error
+			kafkaProducer, err = kafka.NewProducer(kafkaCfg, logger)
+			if err != nil {
+				logger.Error("failed to create Kafka producer", "error", err)
+			} else {
+				if w != nil {
+					w.SetKafkaPublisher(kafkaProducer)
+				}
+				logger.Info("kafka producer enabled")
+			}
+		}
+	}
+
 	// Metrics server on a separate port (no auth).
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("GET /metrics", promhttp.Handler())
@@ -165,11 +194,26 @@ func main() {
 		}
 	}
 
-	if cfg.IngestListenAddr != "" {
-		h := api.NewAPIHandler(store, m, cfg, cmRegistry, logger)
-		if r != nil {
-			h.SetReconciler(r)
+	h := api.NewAPIHandler(store, m, cfg, cmRegistry, logger)
+	if r != nil {
+		h.SetReconciler(r)
+	}
+	if kafkaProducer != nil {
+		h.SetKafkaPublisher(kafkaProducer)
+	}
+
+	// Start Kafka consumer if configured (uses handler as event processor).
+	if kafkaEnabled && kafkaCfg.ConsumerEnabled {
+		kc, err := kafka.NewConsumer(kafkaCfg, h, logger)
+		if err != nil {
+			logger.Error("failed to create Kafka consumer", "error", err)
+		} else {
+			startComponent("kafka-consumer", func() error { return kc.Run(ctx) })
+			logger.Info("kafka consumer enabled", "group", cfg.KafkaConsumerGroup)
 		}
+	}
+
+	if cfg.IngestListenAddr != "" {
 
 		auth, err := authn.New(cfg.AuthIssuerURL, cfg.OSACCACert, logger)
 		if err != nil {

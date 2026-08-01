@@ -1,0 +1,96 @@
+name: Kafka Integration Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'inventory-watcher/internal/kafka/**'
+      - 'inventory-watcher/internal/api/handler.go'
+      - 'inventory-watcher/internal/watcher/watcher.go'
+      - 'inventory-watcher/cmd/consumer/main.go'
+      - 'integration-test/test-kafka.sh'
+      - 'deploy/docker-compose-redpanda.yaml'
+      - '.github/workflows/kafka-integration.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'inventory-watcher/internal/kafka/**'
+      - 'inventory-watcher/internal/api/handler.go'
+      - 'inventory-watcher/internal/watcher/watcher.go'
+      - 'inventory-watcher/cmd/consumer/main.go'
+      - 'integration-test/test-kafka.sh'
+      - 'deploy/docker-compose-redpanda.yaml'
+      - '.github/workflows/kafka-integration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kafka-integration:
+    name: Kafka (Redpanda)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: pass
+          POSTGRES_DB: costdb
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd="pg_isready -U user -d costdb"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: inventory-watcher/go.mod
+          cache-dependency-path: inventory-watcher/go.sum
+
+      - name: Start Redpanda
+        run: |
+          docker run -d --name redpanda -p 19092:19092 \
+            redpandadata/redpanda:latest \
+            redpanda start --mode dev-container \
+              --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092 \
+              --advertise-kafka-addr internal://redpanda:9092,external://127.0.0.1:19092 \
+              --smp 1 --memory 256M --overprovisioned --default-log-level=warn
+
+      - name: Install rpk and wait for Redpanda
+        run: |
+          curl -sLO https://github.com/redpanda-data/redpanda/releases/latest/download/rpk-linux-amd64.zip
+          unzip -o rpk-linux-amd64.zip -d /tmp/rpk
+          sudo mv /tmp/rpk/rpk /usr/local/bin/rpk
+          for i in $(seq 1 30); do
+            rpk cluster info --brokers 127.0.0.1:19092 && break || sleep 2
+          done
+
+      - name: Build consumer
+        run: |
+          cd inventory-watcher
+          go build -o inventory-watcher ./cmd/consumer/
+
+      - name: Run Kafka integration test
+        env:
+          KAFKA_BROKER_OVERRIDE: 127.0.0.1:19092
+        run: bash integration-test/test-kafka.sh
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "=== Producer log ==="
+          cat /tmp/kafka-producer-test.log || true
+          echo ""
+          echo "=== Consumer log ==="
+          cat /tmp/kafka-consumer-test.log || true
+          echo ""
+          echo "=== Redpanda log ==="
+          docker logs redpanda --tail 30 || true
