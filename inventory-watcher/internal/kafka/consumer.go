@@ -20,6 +20,8 @@ type EventProcessor interface {
 type Consumer struct {
 	client    *kgo.Client
 	processor EventProcessor
+	dlq       *Producer
+	dlqTopic  string
 	logger    *slog.Logger
 }
 
@@ -41,8 +43,11 @@ func NewConsumer(cfg Config, processor EventProcessor, logger *slog.Logger) (*Co
 		"group", cfg.ConsumerGroup,
 		"topics", cfg.Topics(),
 	)
-	return &Consumer{client: cl, processor: processor, logger: logger}, nil
+	return &Consumer{client: cl, processor: processor, dlqTopic: cfg.TopicDLQ(), logger: logger}, nil
 }
+
+// SetDLQProducer sets the producer used to publish failed records to the DLQ topic.
+func (c *Consumer) SetDLQProducer(p *Producer) { c.dlq = p }
 
 // Run polls Kafka in a loop until ctx is cancelled. Each batch of
 // fetched records is handed to the EventProcessor one record at a time;
@@ -82,9 +87,9 @@ func (c *Consumer) Run(ctx context.Context) error {
 					"key", string(r.Key),
 					"err", err,
 				)
-				// Processing errors are logged but do not stop consumption.
-				// The record's offset will still be committed so the consumer
-				// does not get stuck on a poison pill.
+				if c.dlq != nil {
+					c.dlq.Publish(ctx, c.dlqTopic, string(r.Key), r.Value)
+				}
 			}
 		})
 

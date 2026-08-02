@@ -208,6 +208,9 @@ func main() {
 		if err != nil {
 			logger.Error("failed to create Kafka consumer", "error", err)
 		} else {
+			if kafkaProducer != nil {
+				kc.SetDLQProducer(kafkaProducer)
+			}
 			startComponent("kafka-consumer", func() error { return kc.Run(ctx) })
 			logger.Info("kafka consumer enabled", "group", cfg.KafkaConsumerGroup)
 		}

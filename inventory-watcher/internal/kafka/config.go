@@ -21,7 +21,22 @@ func (c Config) TopicHeartbeat() string { return c.TopicPrefix + ".heartbeat" }
 // (model lifecycle and token-usage records).
 func (c Config) TopicInference() string { return c.TopicPrefix + ".inference" }
 
-// Topics returns all topic names derived from the configured prefix.
+// TopicDLQ returns the dead-letter queue topic name.
+func (c Config) TopicDLQ() string { return c.TopicPrefix + ".dlq" }
+
+// Topics returns all topic names the consumer subscribes to.
 func (c Config) Topics() []string {
 	return []string{c.TopicLifecycle(), c.TopicHeartbeat(), c.TopicInference()}
 }
+
+// OSAC-985 versioned event type constants.
+const (
+	EventTypeCreatedV1   = "osac.resource.created.v1"
+	EventTypeStartedV1   = "osac.resource.started.v1"
+	EventTypeUpdatedV1   = "osac.resource.updated.v1"
+	EventTypeSuspendedV1 = "osac.resource.suspended.v1"
+	EventTypeResumedV1   = "osac.resource.resumed.v1"
+	EventTypeDeletedV1   = "osac.resource.deleted.v1"
+	EventTypeHeartbeatV1 = "osac.resource.heartbeat.v1"
+	EventTypeInferenceV1 = "osac.inference.usage.v1"
+)

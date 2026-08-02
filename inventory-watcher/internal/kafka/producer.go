@@ -84,20 +84,38 @@ func (p *Producer) PublishEvent(ctx context.Context, eventType, resourceID, tena
 }
 
 // route determines the target topic and record key for an event type.
+// Accepts both our internal event types and the OSAC-985 versioned names.
 func (p *Producer) route(eventType, resourceID, tenantID string) (topic, key string) {
 	switch {
-	// OSAC object lifecycle mutations.
+	// OSAC Watch stream object mutations.
 	case eventType == "EVENT_TYPE_OBJECT_CREATED",
 		eventType == "EVENT_TYPE_OBJECT_UPDATED",
 		eventType == "EVENT_TYPE_OBJECT_DELETED":
 		return p.cfg.TopicLifecycle(), resourceID
 
-	// Periodic heartbeat / liveness signals.
+	// OSAC-985 versioned lifecycle event types.
+	case eventType == EventTypeCreatedV1,
+		eventType == EventTypeStartedV1,
+		eventType == EventTypeUpdatedV1,
+		eventType == EventTypeSuspendedV1,
+		eventType == EventTypeResumedV1,
+		eventType == EventTypeDeletedV1:
+		return p.cfg.TopicLifecycle(), resourceID
+
+	// OSAC-985 heartbeat.
+	case eventType == EventTypeHeartbeatV1:
+		return p.cfg.TopicHeartbeat(), resourceID
+
+	// Periodic heartbeat / liveness signals (our internal names).
 	case strings.HasSuffix(eventType, ".compute_instance.lifecycle"),
 		strings.HasSuffix(eventType, ".cluster.lifecycle"):
 		return p.cfg.TopicHeartbeat(), resourceID
 
-	// Inference model events and token usage.
+	// OSAC-985 inference usage.
+	case eventType == EventTypeInferenceV1:
+		return p.cfg.TopicInference(), tenantID
+
+	// Inference model events and token usage (our internal names).
 	case strings.HasSuffix(eventType, ".model.lifecycle"),
 		eventType == "inference.tokens.used":
 		return p.cfg.TopicInference(), tenantID
