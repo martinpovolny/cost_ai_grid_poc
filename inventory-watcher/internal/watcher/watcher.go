@@ -13,7 +13,7 @@ import (
 
 // KafkaPublisher publishes events to Kafka topics. Optional — nil means no Kafka.
 type KafkaPublisher interface {
-	PublishEvent(ctx context.Context, eventType, resourceID, tenantID string, payload []byte)
+	PublishEvent(ctx context.Context, eventType, resourceType, resourceID, tenantID string, payload []byte)
 }
 
 type Watcher struct {
@@ -79,7 +79,7 @@ func (w *Watcher) handleEvent(ctx context.Context, event osac.Event) error {
 	if w.kafkaPublisher != nil {
 		resourceID, tenantID, _ := extractEventMeta(event)
 		dataJSON, _ := json.Marshal(event)
-		w.kafkaPublisher.PublishEvent(ctx, event.Type, resourceID, tenantID, dataJSON)
+		w.kafkaPublisher.PublishEvent(ctx, event.Type, resourceType, resourceID, tenantID, dataJSON)
 	}
 
 	switch event.Type {

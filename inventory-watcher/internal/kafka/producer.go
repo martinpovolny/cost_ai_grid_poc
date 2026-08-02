@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -72,7 +73,7 @@ func (p *Producer) Publish(_ context.Context, topic, key string, value []byte) {
 //     inference.tokens.used                      -> inference topic, key=tenantID
 //
 // Unknown event types are logged and dropped.
-func (p *Producer) PublishEvent(ctx context.Context, eventType, resourceID, tenantID string, payload []byte) {
+func (p *Producer) PublishEvent(ctx context.Context, eventType, resourceType, resourceID, tenantID string, payload []byte) {
 	topic, key := p.route(eventType, resourceID, tenantID)
 	if topic == "" {
 		p.logger.Warn("kafka: unknown event type, skipping publish",
@@ -80,7 +81,49 @@ func (p *Producer) PublishEvent(ctx context.Context, eventType, resourceID, tena
 		)
 		return
 	}
-	p.Publish(ctx, topic, key, payload)
+
+	// Inject OSAC-985 CloudEvent extension attributes (structured content mode).
+	enriched := injectExtensions(payload, resourceID, resourceType, tenantID)
+	p.Publish(ctx, topic, key, enriched)
+}
+
+// injectExtensions adds osacresourceid, osacresourcetype, osactenant as
+// top-level JSON fields to a CloudEvent in structured content mode.
+func injectExtensions(payload []byte, resourceID, resourceType, tenantID string) []byte {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &obj); err != nil {
+		return payload
+	}
+	if resourceID != "" {
+		obj["osacresourceid"], _ = json.Marshal(resourceID)
+	}
+	if resourceType != "" {
+		obj["osacresourcetype"], _ = json.Marshal(mapResourceType(resourceType))
+	}
+	if tenantID != "" {
+		obj["osactenant"], _ = json.Marshal(tenantID)
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return payload
+	}
+	return out
+}
+
+// mapResourceType converts our internal resource type names to OSAC-985 names.
+func mapResourceType(rt string) string {
+	switch rt {
+	case "ComputeInstance":
+		return "compute_instance"
+	case "Cluster":
+		return "cluster_order"
+	case "model", "Model":
+		return "maas_inference"
+	case "BareMetalInstance":
+		return "bare_metal_instance"
+	default:
+		return strings.ToLower(rt)
+	}
 }
 
 // route determines the target topic and record key for an event type.

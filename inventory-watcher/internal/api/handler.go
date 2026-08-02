@@ -56,7 +56,7 @@ type Reconciler interface {
 
 // KafkaPublisher publishes events to Kafka topics. Optional — nil means no Kafka.
 type KafkaPublisher interface {
-	PublishEvent(ctx context.Context, eventType, resourceID, tenantID string, payload []byte)
+	PublishEvent(ctx context.Context, eventType, resourceType, resourceID, tenantID string, payload []byte)
 }
 
 // Handler implements the generated ServerInterface with all API business logic.
@@ -384,7 +384,7 @@ func (h *APIHandler) IngestEvent(w http.ResponseWriter, r *http.Request) {
 
 	if h.kafkaPublisher != nil {
 		h.logger.Info("kafka: publishing event", "type", ce.Type, "id", ce.ID)
-		h.kafkaPublisher.PublishEvent(ctx, ce.Type, resourceID, tenantID, fullJSON)
+		h.kafkaPublisher.PublishEvent(ctx, ce.Type, resourceType, resourceID, tenantID, fullJSON)
 	}
 
 	var processingErr error
