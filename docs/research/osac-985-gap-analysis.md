@@ -7,11 +7,11 @@ Comparison of our Kafka implementation against the
 
 | # | Gap | Priority | Status |
 |---|---|---|---|
-| 1 | CloudEvent extension attributes | HIGH | Not started |
-| 2 | Event type naming (proposal v1 names) | HIGH | Not started |
+| 1 | CloudEvent extension attributes | HIGH | **Done** — osacresourceid, osacresourcetype, osactenant injected (structured mode) |
+| 2 | Event type naming (proposal v1 names) | HIGH | **Done** — producer route() accepts both internal and v1 names |
 | 3 | Base schema with billing_dimensions | MEDIUM | Not started |
 | 4 | Corrections topic | LOW | Deferred (PoC) |
-| 5 | Dead-letter queue (DLQ) topic | LOW | Not started |
+| 5 | Dead-letter queue (DLQ) topic | LOW | **Done** — failed records published to osac.metering.dlq |
 | 6 | Provider adapter interface | MEDIUM | Not started |
 | 7 | Dedup cache (in-memory TTL) | OK | Our DB dedup is stronger |
 | 8 | VMaaS/CaaS state machine | LOW | Deferred (PoC) |
