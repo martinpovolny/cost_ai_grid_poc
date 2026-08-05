@@ -1,0 +1,253 @@
+name: OSAC → Kafka Integration Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'inventory-watcher/internal/api/handler.go'
+      - 'inventory-watcher/internal/kafka/**'
+      - 'inventory-watcher/cmd/consumer/main.go'
+      - 'integration-test/test-osac-kafka.sh'
+      - 'snippets/osac-create-vm.sh'
+      - '.github/workflows/osac-kafka-integration.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'inventory-watcher/internal/api/handler.go'
+      - 'inventory-watcher/internal/kafka/**'
+      - 'inventory-watcher/cmd/consumer/main.go'
+      - 'integration-test/test-osac-kafka.sh'
+      - 'snippets/osac-create-vm.sh'
+      - '.github/workflows/osac-kafka-integration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  osac-kafka:
+    name: OSAC → Kafka → Consumer
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: pass
+          POSTGRES_DB: costdb
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd="pg_isready -U user -d costdb"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Install Python deps
+        run: pip install PyJWT cryptography
+
+      - name: Clone and build fulfillment-service (latest)
+        run: |
+          git clone --depth 1 https://github.com/osac-project/fulfillment-service.git /tmp/fulfillment-service
+          cd /tmp/fulfillment-service
+          echo "fulfillment-service at $(git rev-parse --short HEAD)"
+          GOTOOLCHAIN=auto go build -o /tmp/fulfillment-service-bin ./cmd/fulfillment-service
+
+      - name: Clone and build metering-service (latest)
+        run: |
+          git clone --depth 1 https://github.com/osac-project/osac.git /tmp/osac
+          cd /tmp/osac/osac-metering/metering-service
+          echo "metering-service at $(git rev-parse --short HEAD)"
+          GOTOOLCHAIN=auto go build -o /tmp/metering-service-bin ./cmd/metering-service
+
+      - name: Build cost consumer
+        run: |
+          cd inventory-watcher
+          go build -o inventory-watcher ./cmd/consumer/
+
+      - name: Generate TLS certs
+        run: |
+          mkdir -p /tmp/certs
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout /tmp/certs/server.key -out /tmp/certs/server.crt \
+            -days 1 \
+            -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>/dev/null
+
+      - name: Generate auth token
+        run: |
+          python3 -c "
+          import json, hashlib, base64, datetime
+          from cryptography.hazmat.primitives import serialization
+          import jwt
+          with open('/tmp/certs/server.key', 'rb') as f:
+              private_key = serialization.load_pem_private_key(f.read(), password=None)
+          pub = private_key.public_key().public_numbers()
+          def b64url(n):
+              length = (n.bit_length() + 7) // 8
+              return base64.urlsafe_b64encode(n.to_bytes(length, 'big')).rstrip(b'=').decode()
+          jwk_data = {'e': b64url(pub.e), 'kty': 'RSA', 'n': b64url(pub.n)}
+          thumbprint = json.dumps(jwk_data, separators=(',', ':'), sort_keys=True)
+          kid = base64.urlsafe_b64encode(hashlib.sha256(thumbprint.encode()).digest()).rstrip(b'=').decode()
+          now = datetime.datetime.now(datetime.timezone.utc)
+          token = jwt.encode({
+              'iss': 'https://localhost:8013',
+              'sub': 'admin',
+              'preferred_username': 'admin',
+              'groups': ['admins'],
+              'iat': now,
+              'exp': now + datetime.timedelta(hours=1),
+          }, private_key, algorithm='RS256', headers={'kid': kid})
+          print(token)
+          " > /tmp/osac_token.txt
+
+      - name: Start OIDC mock
+        run: |
+          python3 -c "
+          import json, hashlib, base64, ssl, http.server, os, sys
+          from cryptography.hazmat.primitives import serialization
+          ISSUER = 'https://localhost:8013'
+          PORT = 8013
+          CERT = '/tmp/certs/server.crt'
+          KEY = '/tmp/certs/server.key'
+          with open(KEY, 'rb') as f:
+              private_key = serialization.load_pem_private_key(f.read(), password=None)
+          pub = private_key.public_key().public_numbers()
+          def b64url(n):
+              length = (n.bit_length() + 7) // 8
+              return base64.urlsafe_b64encode(n.to_bytes(length, 'big')).rstrip(b'=').decode()
+          jwk_data = {'e': b64url(pub.e), 'kty': 'RSA', 'n': b64url(pub.n)}
+          thumbprint = json.dumps(jwk_data, separators=(',', ':'), sort_keys=True)
+          kid = base64.urlsafe_b64encode(hashlib.sha256(thumbprint.encode()).digest()).rstrip(b'=').decode()
+          OPENID_CONFIG = json.dumps({
+              'issuer': ISSUER,
+              'jwks_uri': f'{ISSUER}/.well-known/jwks.json',
+              'token_endpoint': f'{ISSUER}/token',
+              'authorization_endpoint': f'{ISSUER}/authorize',
+          })
+          JWKS = json.dumps({'keys': [{'kty': 'RSA', 'kid': kid, 'use': 'sig', 'alg': 'RS256',
+                                        'n': b64url(pub.n), 'e': b64url(pub.e)}]})
+          class Handler(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  if self.path == '/.well-known/openid-configuration':
+                      body = OPENID_CONFIG
+                  elif self.path == '/.well-known/jwks.json':
+                      body = JWKS
+                  else:
+                      self.send_response(404); self.end_headers(); return
+                  self.send_response(200)
+                  self.send_header('Content-Type', 'application/json')
+                  self.end_headers()
+                  self.wfile.write(body.encode())
+              def log_message(self, format, *args): pass
+          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          ctx.load_cert_chain(CERT, KEY)
+          server = http.server.HTTPServer(('0.0.0.0', PORT), Handler)
+          server.socket = ctx.wrap_socket(server.socket, server_side=True)
+          print(f'OIDC mock on https://0.0.0.0:{PORT}', file=sys.stderr)
+          server.serve_forever()
+          " &
+          sleep 2
+
+      - name: Start Redpanda
+        run: |
+          docker run -d --name redpanda --network host \
+            redpandadata/redpanda:latest \
+            redpanda start --mode dev-container \
+              --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092 \
+              --advertise-kafka-addr internal://127.0.0.1:9092,external://127.0.0.1:19092 \
+              --smp 1 --memory 256M --overprovisioned --default-log-level=warn
+
+      - name: Install rpk and wait for Redpanda
+        run: |
+          curl -sLO https://github.com/redpanda-data/redpanda/releases/latest/download/rpk-linux-amd64.zip
+          unzip -o rpk-linux-amd64.zip -d /tmp/rpk
+          sudo mv /tmp/rpk/rpk /usr/local/bin/rpk
+          for i in $(seq 1 30); do
+            rpk cluster info --brokers 127.0.0.1:19092 && break || sleep 2
+          done
+          rpk topic create osac.metering.lifecycle --brokers 127.0.0.1:19092
+
+      - name: Create OSAC database
+        run: |
+          PGPASSWORD=pass psql -h 127.0.0.1 -p 5434 -U user -d costdb \
+            -c "CREATE DATABASE osacdb;" || true
+
+      - name: Start fulfillment-service
+        env:
+          GRPC_ENFORCE_ALPN_ENABLED: "false"
+        run: |
+          /tmp/fulfillment-service-bin start grpc-server \
+            --grpc-listener-address=0.0.0.0:8010 \
+            --grpc-listener-tls-crt=/tmp/certs/server.crt \
+            --grpc-listener-tls-key=/tmp/certs/server.key \
+            --ca-file=/tmp/certs/server.crt \
+            --db-url="postgres://user:pass@127.0.0.1:5434/osacdb?sslmode=disable" \
+            --token-issuer=https://localhost:8013 \
+            --token-signer-key=/tmp/certs/server.key \
+            --token-signer-crt=/tmp/certs/server.crt \
+            --token-encryption-crt=/tmp/certs/server.crt \
+            --grpc-authn-trusted-token-issuers=https://localhost:8013 \
+            --metrics-listener-address=127.0.0.1:8003 \
+            > /tmp/osac-grpc.log 2>&1 &
+
+          /tmp/fulfillment-service-bin start rest-gateway \
+            --http-listener-address=0.0.0.0:8011 \
+            --grpc-server-address=localhost:8010 \
+            --ca-file=/tmp/certs/server.crt \
+            --metrics-listener-address=127.0.0.1:8004 \
+            > /tmp/osac-rest.log 2>&1 &
+
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8011/api/fulfillment/v1/instance_types \
+              -H "Authorization: Bearer $(cat /tmp/osac_token.txt)" && break || sleep 2
+          done
+          echo "OSAC fulfillment-service ready"
+
+      - name: Start metering-service
+        env:
+          FULFILLMENT_SERVER_ADDRESS: localhost:8010
+          FULFILLMENT_TOKEN_FILE: /tmp/osac_token.txt
+          TLS_CA_CERT: /tmp/certs/server.crt
+          KAFKA_BROKERS: 127.0.0.1:19092
+          KAFKA_TLS_DISABLE: "true"
+          KAFKA_TOPIC: osac.metering.lifecycle
+          HEALTH_ADDR: ":8090"
+          GRPC_ENFORCE_ALPN_ENABLED: "false"
+        run: |
+          /tmp/metering-service-bin > /tmp/metering-service.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8090/healthz && break || sleep 2
+          done
+          echo "OSAC metering-service ready"
+
+      - name: Run OSAC → Kafka integration test
+        run: bash integration-test/test-osac-kafka.sh
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "=== OSAC gRPC ==="
+          tail -30 /tmp/osac-grpc.log || true
+          echo ""
+          echo "=== OSAC REST ==="
+          tail -30 /tmp/osac-rest.log || true
+          echo ""
+          echo "=== Metering service ==="
+          tail -30 /tmp/metering-service.log || true
+          echo ""
+          echo "=== Cost consumer ==="
+          tail -30 /tmp/cost-consumer-osac.log || true
+          echo ""
+          echo "=== Redpanda ==="
+          docker logs redpanda --tail 30 || true
