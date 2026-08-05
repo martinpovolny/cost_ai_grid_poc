@@ -33,6 +33,13 @@ const (
 	eventTypeModel          = "osac.model.lifecycle"
 	eventTypeInferenceTokens = "inference.tokens.used"
 
+	// OSAC metering-service v1 event types (OSAC-985).
+	eventTypeResourceCreated   = "osac.resource.created.v1"
+	eventTypeResourceDeleted   = "osac.resource.deleted.v1"
+	eventTypeResourceStarted   = "osac.resource.started.v1"
+	eventTypeResourceSuspended = "osac.resource.suspended.v1"
+	eventTypeResourceUpdated   = "osac.resource.updated.v1"
+
 	maxRequestBodySize = 1 << 20 // 1MB
 	maxIDLength        = 256
 
@@ -116,13 +123,15 @@ func (h *APIHandler) ProcessKafkaEvent(ctx context.Context, topic string, payloa
 		return nil
 	}
 
-	switch ce.Type {
-	case eventTypeComputeInstance:
+	switch {
+	case ce.Type == eventTypeComputeInstance:
 		return h.processComputeInstanceEvent(ctx, ce)
-	case eventTypeCluster:
+	case ce.Type == eventTypeCluster:
 		return h.processClusterEvent(ctx, ce)
-	case eventTypeModel, eventTypeInferenceTokens:
+	case ce.Type == eventTypeModel || ce.Type == eventTypeInferenceTokens:
 		return h.processModelEvent(ctx, ce)
+	case isOSACv1EventType(ce.Type):
+		return h.processOSACResourceEvent(ctx, ce)
 	default:
 		if h.customMetrics != nil && h.customMetrics.HasEventType(ce.Type) {
 			return h.customMetrics.ProcessEvent(ctx, h.store, ce.Type, ce.Data, ce.Time, h.logger)
@@ -212,6 +221,35 @@ type cloudEventInternal struct {
 	Subject         string          `json:"subject"`
 	DataContentType string          `json:"datacontenttype"`
 	Data            json.RawMessage `json:"data"`
+
+	// OSAC metering-service v1 CloudEvent extensions (structured content mode).
+	OSACResourceID   string `json:"osacresourceid,omitempty"`
+	OSACResourceType string `json:"osacresourcetype,omitempty"`
+	OSACTenant       string `json:"osactenant,omitempty"`
+	OSACProject      string `json:"osacproject,omitempty"`
+}
+
+// meteringData is the payload from the OSAC metering-service v1.
+type meteringData struct {
+	ResourceID        string          `json:"resource_id"`
+	ResourceType      string          `json:"resource_type"`
+	TenantID          string          `json:"tenant_id"`
+	ProjectID         *string         `json:"project_id"`
+	CatalogItemID     *string         `json:"catalog_item_id"`
+	TemplateID        *string         `json:"template_id"`
+	PreviousState     *string         `json:"previous_state"`
+	CurrentState      string          `json:"current_state"`
+	TransitionTime    string          `json:"transition_time"`
+	DurationSeconds   *float64        `json:"duration_seconds"`
+	BillingDimensions json.RawMessage `json:"billing_dimensions"`
+	SchemaVersion     string          `json:"schema_version"`
+}
+
+// vmBillingDimensions holds compute_instance billing dimensions.
+type vmBillingDimensions struct {
+	InstanceType    *string `json:"instance_type"`
+	ImageRef        *string `json:"image_ref"`
+	BootDiskSizeGiB *int32  `json:"boot_disk_size_gib"`
 }
 
 // computeInstanceEventData matches the OSAC metering collector VMaaS schema.
@@ -414,7 +452,25 @@ func (h *APIHandler) IngestEvent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func isOSACv1EventType(t string) bool {
+	switch t {
+	case eventTypeResourceCreated, eventTypeResourceDeleted,
+		eventTypeResourceStarted, eventTypeResourceSuspended,
+		eventTypeResourceUpdated:
+		return true
+	}
+	return false
+}
+
 func classifyEvent(ce cloudEventInternal) (resourceType, resourceID, tenantID string) {
+	if isOSACv1EventType(ce.Type) {
+		rt := ce.OSACResourceType
+		if rt == "" {
+			rt = ce.Type
+		}
+		return rt, ce.OSACResourceID, ce.OSACTenant
+	}
+
 	var peek struct {
 		TenantID       string `json:"tenant_id"`
 		OrganizationID string `json:"organization_id"`
@@ -614,6 +670,68 @@ func (h *APIHandler) processModelEvent(ctx context.Context, ce cloudEventInterna
 		EventTime:         ce.Time,
 		DurationSeconds:   data.DurationSeconds,
 	})
+	return nil
+}
+
+// processOSACResourceEvent handles OSAC metering-service v1 lifecycle events.
+// These arrive on the osac.metering.lifecycle topic with resource state
+// transitions. For compute_instance resources, we upsert an inventory record
+// so that our existing metering sweep picks up the resource.
+func (h *APIHandler) processOSACResourceEvent(ctx context.Context, ce cloudEventInternal) error {
+	var md meteringData
+	if err := json.Unmarshal(ce.Data, &md); err != nil {
+		return fmt.Errorf("osac v1: decode metering data: %w", err)
+	}
+
+	h.logger.Info("osac v1 resource event",
+		"type", ce.Type,
+		"resource_type", md.ResourceType,
+		"resource_id", md.ResourceID,
+		"tenant_id", md.TenantID,
+		"state", md.CurrentState,
+	)
+
+	switch md.ResourceType {
+	case "compute_instance":
+		return h.processOSACComputeInstance(ctx, ce, md)
+	default:
+		h.logger.Info("osac v1: unhandled resource type", "resource_type", md.ResourceType)
+		return nil
+	}
+}
+
+func (h *APIHandler) processOSACComputeInstance(ctx context.Context, ce cloudEventInternal, md meteringData) error {
+	state := md.CurrentState
+	if ce.Type == eventTypeResourceDeleted {
+		state = "DELETING"
+	}
+
+	var bd vmBillingDimensions
+	if len(md.BillingDimensions) > 0 {
+		_ = json.Unmarshal(md.BillingDimensions, &bd)
+	}
+
+	instanceType := ""
+	if bd.InstanceType != nil {
+		instanceType = *bd.InstanceType
+	}
+
+	if err := h.store.UpsertComputeInstance(ctx, inventory.ComputeInstanceRecord{
+		InstanceID:   md.ResourceID,
+		Tenant:       md.TenantID,
+		State:        state,
+		InstanceType: instanceType,
+		CreatedAt:    ce.Time,
+		LastEventID:  ce.ID,
+	}); err != nil {
+		return fmt.Errorf("osac v1: upsert compute_instance: %w", err)
+	}
+
+	h.logger.Info("osac v1: upserted compute_instance",
+		"instance_id", md.ResourceID,
+		"state", state,
+		"instance_type", instanceType,
+	)
 	return nil
 }
 
