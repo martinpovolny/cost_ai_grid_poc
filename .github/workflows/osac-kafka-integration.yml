@@ -68,6 +68,9 @@ jobs:
           git clone --depth 1 https://github.com/osac-project/osac.git /tmp/osac
           cd /tmp/osac/osac-metering/metering-service
           echo "metering-service at $(git rev-parse --short HEAD)"
+          # Disable SASL/TLS validation for Redpanda dev testing
+          sed -i 's/return fmt.Errorf("KAFKA_SASL_USERNAME is required")/\/\/ disabled for CI/' cmd/metering-service/main.go || true
+          sed -i 's/return fmt.Errorf("KAFKA_SASL_PASSWORD_FILE is required")/\/\/ disabled for CI/' cmd/metering-service/main.go || true
           GOTOOLCHAIN=auto go build -o /tmp/metering-service-bin ./cmd/metering-service
 
       - name: Build cost consumer
