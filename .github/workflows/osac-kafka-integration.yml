@@ -93,78 +93,18 @@ jobs:
             -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>/dev/null
 
       - name: Generate auth token
-        run: |
-          python3 -c "
-          import json, hashlib, base64, datetime
-          from cryptography.hazmat.primitives import serialization
-          import jwt
-          with open('/tmp/certs/server.key', 'rb') as f:
-              private_key = serialization.load_pem_private_key(f.read(), password=None)
-          pub = private_key.public_key().public_numbers()
-          def b64url(n):
-              length = (n.bit_length() + 7) // 8
-              return base64.urlsafe_b64encode(n.to_bytes(length, 'big')).rstrip(b'=').decode()
-          jwk_data = {'e': b64url(pub.e), 'kty': 'RSA', 'n': b64url(pub.n)}
-          thumbprint = json.dumps(jwk_data, separators=(',', ':'), sort_keys=True)
-          kid = base64.urlsafe_b64encode(hashlib.sha256(thumbprint.encode()).digest()).rstrip(b'=').decode()
-          now = datetime.datetime.now(datetime.timezone.utc)
-          token = jwt.encode({
-              'iss': 'https://localhost:8013',
-              'sub': 'admin',
-              'preferred_username': 'admin',
-              'groups': ['admins'],
-              'iat': now,
-              'exp': now + datetime.timedelta(hours=1),
-          }, private_key, algorithm='RS256', headers={'kid': kid})
-          print(token)
-          " > /tmp/osac_token.txt
+        env:
+          OIDC_KEY: /tmp/certs/server.key
+          TOKEN_HOURS: "1"
+        run: python3 inventory-watcher/scripts/gen_token.py > /tmp/osac_token.txt
 
       - name: Start OIDC mock
+        env:
+          OIDC_KEY: /tmp/certs/server.key
+          OIDC_CERT: /tmp/certs/server.crt
+          OIDC_BIND: "0.0.0.0"
         run: |
-          python3 -c "
-          import json, hashlib, base64, ssl, http.server, os, sys
-          from cryptography.hazmat.primitives import serialization
-          ISSUER = 'https://localhost:8013'
-          PORT = 8013
-          CERT = '/tmp/certs/server.crt'
-          KEY = '/tmp/certs/server.key'
-          with open(KEY, 'rb') as f:
-              private_key = serialization.load_pem_private_key(f.read(), password=None)
-          pub = private_key.public_key().public_numbers()
-          def b64url(n):
-              length = (n.bit_length() + 7) // 8
-              return base64.urlsafe_b64encode(n.to_bytes(length, 'big')).rstrip(b'=').decode()
-          jwk_data = {'e': b64url(pub.e), 'kty': 'RSA', 'n': b64url(pub.n)}
-          thumbprint = json.dumps(jwk_data, separators=(',', ':'), sort_keys=True)
-          kid = base64.urlsafe_b64encode(hashlib.sha256(thumbprint.encode()).digest()).rstrip(b'=').decode()
-          OPENID_CONFIG = json.dumps({
-              'issuer': ISSUER,
-              'jwks_uri': f'{ISSUER}/.well-known/jwks.json',
-              'token_endpoint': f'{ISSUER}/token',
-              'authorization_endpoint': f'{ISSUER}/authorize',
-          })
-          JWKS = json.dumps({'keys': [{'kty': 'RSA', 'kid': kid, 'use': 'sig', 'alg': 'RS256',
-                                        'n': b64url(pub.n), 'e': b64url(pub.e)}]})
-          class Handler(http.server.BaseHTTPRequestHandler):
-              def do_GET(self):
-                  if self.path == '/.well-known/openid-configuration':
-                      body = OPENID_CONFIG
-                  elif self.path == '/.well-known/jwks.json':
-                      body = JWKS
-                  else:
-                      self.send_response(404); self.end_headers(); return
-                  self.send_response(200)
-                  self.send_header('Content-Type', 'application/json')
-                  self.end_headers()
-                  self.wfile.write(body.encode())
-              def log_message(self, format, *args): pass
-          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-          ctx.load_cert_chain(CERT, KEY)
-          server = http.server.HTTPServer(('0.0.0.0', PORT), Handler)
-          server.socket = ctx.wrap_socket(server.socket, server_side=True)
-          print(f'OIDC mock on https://0.0.0.0:{PORT}', file=sys.stderr)
-          server.serve_forever()
-          " &
+          python3 inventory-watcher/scripts/oidc_server.py &
           sleep 2
 
       - name: Start Redpanda
