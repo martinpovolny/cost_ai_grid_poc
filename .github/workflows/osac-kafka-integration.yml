@@ -24,6 +24,14 @@ on:
 permissions:
   contents: read
 
+# Pin OSAC components to known-compatible versions.
+# The metering-service generates protos from buf.build/osac-project/private-api:v0.0.83.
+# The fulfillment-service must match those proto definitions.
+# Bump together when adopting new OSAC proto versions.
+env:
+  OSAC_FULFILLMENT_REF: c4110b28a14d4a3b3926ae5360e2cd59c15430d5
+  OSAC_METERING_REF: 76c2261233c9f85caa73ff20e70e5da6e98b2b1e
+
 jobs:
   osac-kafka:
     name: OSAC → Kafka → Consumer
@@ -56,26 +64,26 @@ jobs:
       - name: Install Python deps
         run: pip install PyJWT cryptography
 
-      - name: Clone and build fulfillment-service (latest)
+      - name: Clone and build fulfillment-service
         run: |
-          git clone --depth 1 https://github.com/osac-project/fulfillment-service.git /tmp/fulfillment-service
+          git clone https://github.com/osac-project/fulfillment-service.git /tmp/fulfillment-service
           cd /tmp/fulfillment-service
+          git checkout "$OSAC_FULFILLMENT_REF"
           echo "fulfillment-service at $(git rev-parse --short HEAD)"
           GOTOOLCHAIN=auto go build -o /tmp/fulfillment-service-bin ./cmd/fulfillment-service
 
-      - name: Clone and build metering-service (latest)
+      - name: Clone and build metering-service
         run: |
-          git clone --depth 1 https://github.com/osac-project/osac.git /tmp/osac
-          cd /tmp/osac/osac-metering/metering-service
+          git clone https://github.com/osac-project/osac.git /tmp/osac
+          cd /tmp/osac
+          git checkout "$OSAC_METERING_REF"
+          cd osac-metering/metering-service
           echo "metering-service at $(git rev-parse --short HEAD)"
-          # The metering-service requires SASL credentials and a DB in production.
-          # For CI with plain Kafka, patch out the checks and skip SASL connect.
+          # Patch for plain Kafka (no SASL, no TLS, no mandatory DB)
           sed -i '/KAFKA_SASL_USERNAME is required/d' cmd/metering-service/main.go
           sed -i '/KAFKA_SASL_PASSWORD_FILE is required/d' cmd/metering-service/main.go
-          sed -i '/DB_URL_FILE is required/d' cmd/metering-service/main.go
-          sed -i 's/^func ConfigureSASL.*/func ConfigureSASL(sc *sarama.Config, user, passFile string) error {\n\tif user == "" { return nil }/' internal/kafka/connect.go
-          # TLS is always enabled in upstream; disable for plain Kafka
-          sed -i 's/sc.Net.TLS.Enable = true/sc.Net.TLS.Enable = os.Getenv("KAFKA_TLS_DISABLE") != "true"/' internal/kafka/connect.go
+          sed -i 's/^func configureSASL.*/func configureSASL(sc *sarama.Config, user, passFile string) error {\n\tif user == "" { return nil }/' internal/kafka/connect.go
+          sed -i 's/sc.Net.TLS.Enable = .*$/sc.Net.TLS.Enable = os.Getenv("KAFKA_TLS_DISABLE") != "true"/' internal/kafka/connect.go
           GOTOOLCHAIN=auto go build -o /tmp/metering-service-bin ./cmd/metering-service
 
       - name: Build cost consumer
@@ -136,14 +144,10 @@ jobs:
           done
           echo "Kafka ready, topics created"
 
-      - name: Create OSAC databases
+      - name: Create OSAC database
         run: |
           PGPASSWORD=pass psql -h 127.0.0.1 -p 5434 -U user -d costdb \
             -c "CREATE DATABASE osacdb;" || true
-          PGPASSWORD=pass psql -h 127.0.0.1 -p 5434 -U user -d costdb \
-            -c "CREATE DATABASE metering;" || true
-          mkdir -p /tmp/metering-db-url
-          echo "postgres://user:pass@127.0.0.1:5434/metering?sslmode=disable" > /tmp/metering-db-url/url
 
       - name: Start fulfillment-service
         env:
@@ -181,9 +185,7 @@ jobs:
           done
           if [ "$READY" != "true" ]; then
             echo "ERROR: OSAC fulfillment-service not ready after 120s"
-            echo "=== gRPC log ==="
             tail -30 /tmp/osac-grpc.log || true
-            echo "=== REST log ==="
             tail -30 /tmp/osac-rest.log || true
             exit 1
           fi
@@ -197,7 +199,6 @@ jobs:
           KAFKA_BROKERS: 127.0.0.1:19092
           KAFKA_TLS_DISABLE: "true"
           KAFKA_TOPIC: osac.metering.lifecycle
-          DB_URL_FILE: /tmp/metering-db-url
           HEALTH_ADDR: ":8090"
           GRPC_ENFORCE_ALPN_ENABLED: "false"
         run: |
@@ -211,11 +212,11 @@ jobs:
             sleep 2
           done
           if [ "$READY" != "true" ]; then
-            echo "ERROR: metering-service watch not ready after 180s"
+            echo "ERROR: metering-service not ready after 180s"
             cat /tmp/metering-service.log || true
             exit 1
           fi
-          echo "OSAC metering-service ready (watch consumer active)"
+          echo "OSAC metering-service ready"
 
       - name: Run OSAC → Kafka integration test
         run: bash integration-test/test-osac-kafka.sh

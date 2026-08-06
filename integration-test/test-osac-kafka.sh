@@ -11,8 +11,8 @@ set -uo pipefail
 #
 # Prerequisites:
 #   - OSAC fulfillment-service REST on localhost:8011
-#   - OSAC metering-service connected to fulfillment + Redpanda
-#   - Redpanda on localhost:19092
+#   - OSAC metering-service connected to fulfillment + Kafka
+#   - Kafka on localhost:19092
 #   - Postgres on localhost:5434
 #   - /tmp/osac_token.txt with valid token
 
@@ -91,6 +91,18 @@ get_id() {
 
 get_first_id() {
     python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null
+}
+
+# Consume from Kafka topic (works with rpk or kafka-console-consumer)
+kafka_consume() {
+    local topic="$1" max_msgs="${2:-10}"
+    if command -v rpk > /dev/null 2>&1; then
+        timeout 10 rpk topic consume "$topic" --brokers "$BROKER" -o start -f '%v\n' -n "$max_msgs" 2>/dev/null
+    elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q kafka; then
+        timeout 10 docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+            --bootstrap-server "$BROKER" --topic "$topic" \
+            --from-beginning --max-messages "$max_msgs" --timeout-ms 8000 2>/dev/null
+    fi
 }
 
 echo "=== OSAC → Kafka Integration Test ==="
@@ -224,8 +236,8 @@ if ! curl -sf http://127.0.0.1:18026/healthz > /dev/null 2>&1; then
 fi
 echo "  Consumer started (PID $CONSUMER_PID)"
 
-# Give metering-service time to establish Watch stream
-echo "  Waiting 10s for metering-service Watch stream..."
+# Wait for metering-service Watch stream to be fully established
+echo "  Waiting 10s for Watch stream..."
 sleep 10
 
 # ── Step 3: Create VM ──
@@ -260,14 +272,8 @@ echo ""
 echo "--- Step 4: Verify event pipeline (waiting 15s) ---"
 sleep 15
 
-# Check Kafka topic (rpk or kafka-console-consumer)
-if command -v rpk > /dev/null 2>&1; then
-    KAFKA_MSG=$(timeout 10 rpk topic consume osac.metering.lifecycle --brokers "$BROKER" -o start -f '%v\n' -n 10 2>/dev/null)
-else
-    KAFKA_MSG=$(timeout 10 docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
-        --bootstrap-server "$BROKER" --topic osac.metering.lifecycle \
-        --from-beginning --max-messages 10 --timeout-ms 8000 2>/dev/null)
-fi
+# Check Kafka topic
+KAFKA_MSG=$(kafka_consume osac.metering.lifecycle 10)
 VM_IN_KAFKA=$(echo "$KAFKA_MSG" | grep -c "$VM_ID" || echo "0")
 check_ge "VM event on Kafka topic" 1 "$VM_IN_KAFKA"
 
