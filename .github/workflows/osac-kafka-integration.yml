@@ -74,6 +74,8 @@ jobs:
           sed -i '/KAFKA_SASL_PASSWORD_FILE is required/d' cmd/metering-service/main.go
           sed -i '/DB_URL_FILE is required/d' cmd/metering-service/main.go
           sed -i 's/^func ConfigureSASL.*/func ConfigureSASL(sc *sarama.Config, user, passFile string) error {\n\tif user == "" { return nil }/' internal/kafka/connect.go
+          # TLS is always enabled in upstream; disable for plain Kafka
+          sed -i 's/sc.Net.TLS.Enable = true/sc.Net.TLS.Enable = os.Getenv("KAFKA_TLS_DISABLE") != "true"/' internal/kafka/connect.go
           GOTOOLCHAIN=auto go build -o /tmp/metering-service-bin ./cmd/metering-service
 
       - name: Build cost consumer
