@@ -68,11 +68,12 @@ jobs:
           git clone --depth 1 https://github.com/osac-project/osac.git /tmp/osac
           cd /tmp/osac/osac-metering/metering-service
           echo "metering-service at $(git rev-parse --short HEAD)"
-          # The metering-service requires SASL credentials and a DB URL file
-          # in production. For CI with plain Kafka, patch out those checks.
+          # The metering-service requires SASL credentials and a DB in production.
+          # For CI with plain Kafka, patch out the checks and skip SASL connect.
           sed -i '/KAFKA_SASL_USERNAME is required/d' cmd/metering-service/main.go
           sed -i '/KAFKA_SASL_PASSWORD_FILE is required/d' cmd/metering-service/main.go
           sed -i '/DB_URL_FILE is required/d' cmd/metering-service/main.go
+          sed -i 's/^func ConfigureSASL.*/func ConfigureSASL(sc *sarama.Config, user, passFile string) error {\n\tif user == "" { return nil }/' internal/kafka/connect.go
           GOTOOLCHAIN=auto go build -o /tmp/metering-service-bin ./cmd/metering-service
 
       - name: Build cost consumer
