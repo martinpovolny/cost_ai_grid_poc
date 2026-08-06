@@ -243,19 +243,19 @@ jobs:
         run: |
           /tmp/metering-service-bin > /tmp/metering-service.log 2>&1 &
           READY=false
-          for i in $(seq 1 60); do
-            if curl -sf http://localhost:8090/healthz > /dev/null 2>&1; then
+          for i in $(seq 1 90); do
+            if grep -q "starting watch consumer" /tmp/metering-service.log 2>/dev/null; then
               READY=true
               break
             fi
             sleep 2
           done
           if [ "$READY" != "true" ]; then
-            echo "ERROR: metering-service not ready after 120s"
-            tail -30 /tmp/metering-service.log || true
+            echo "ERROR: metering-service watch not ready after 180s"
+            cat /tmp/metering-service.log || true
             exit 1
           fi
-          echo "OSAC metering-service ready"
+          echo "OSAC metering-service ready (watch consumer active)"
 
       - name: Run OSAC → Kafka integration test
         run: bash integration-test/test-osac-kafka.sh

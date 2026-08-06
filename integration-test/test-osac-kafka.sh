@@ -217,6 +217,10 @@ if ! curl -sf http://127.0.0.1:18026/healthz > /dev/null 2>&1; then
 fi
 echo "  Consumer started (PID $CONSUMER_PID)"
 
+# Give metering-service time to establish Watch stream
+echo "  Waiting 10s for metering-service Watch stream..."
+sleep 10
+
 # ── Step 3: Create VM ──
 echo ""
 echo "--- Step 3: Create ComputeInstance ---"
