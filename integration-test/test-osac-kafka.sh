@@ -307,3 +307,4 @@ if [ "$FAIL" -gt 0 ]; then
 else
     echo -e "  ${GREEN}ALL PASSED${NC}"
 fi
+# Pinned OSAC versions for proto compatibility

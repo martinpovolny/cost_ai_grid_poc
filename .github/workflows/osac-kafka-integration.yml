@@ -24,10 +24,9 @@ on:
 permissions:
   contents: read
 
-# Pin OSAC components to known-compatible versions.
-# The metering-service generates protos from buf.build/osac-project/private-api:v0.0.83.
-# The fulfillment-service must match those proto definitions.
-# Bump together when adopting new OSAC proto versions.
+# Pin OSAC components to known-compatible versions. The metering-service
+# generates protos from buf.build/osac-project/private-api:v0.0.83 — the
+# fulfillment-service must match. Bump together when adopting new versions.
 env:
   OSAC_FULFILLMENT_REF: c4110b28a14d4a3b3926ae5360e2cd59c15430d5
   OSAC_METERING_REF: 76c2261233c9f85caa73ff20e70e5da6e98b2b1e
