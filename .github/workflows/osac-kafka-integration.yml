@@ -68,14 +68,11 @@ jobs:
           git clone --depth 1 https://github.com/osac-project/osac.git /tmp/osac
           cd /tmp/osac/osac-metering/metering-service
           echo "metering-service at $(git rev-parse --short HEAD)"
-          # Patch for Redpanda dev testing (no SASL, no idempotent producer)
-          sed -i 's/return fmt.Errorf("KAFKA_SASL_USERNAME is required")/\/\/ disabled for CI/' cmd/metering-service/main.go || true
-          sed -i 's/return fmt.Errorf("KAFKA_SASL_PASSWORD_FILE is required")/\/\/ disabled for CI/' cmd/metering-service/main.go || true
-          # NewProducerConfig lives in publisher.go
-          sed -i 's/config.Producer.Idempotent = true/config.Producer.Idempotent = false/' internal/kafka/publisher.go || true
-          sed -i '/config.Net.MaxOpenRequests = 1/d' internal/kafka/publisher.go || true
-          echo "Patched publisher.go:"
-          grep -n "Idempotent\|MaxOpenRequests" internal/kafka/publisher.go || echo "(lines removed)"
+          # The metering-service requires SASL credentials and a DB URL file
+          # in production. For CI with plain Kafka, patch out those checks.
+          sed -i '/KAFKA_SASL_USERNAME is required/d' cmd/metering-service/main.go
+          sed -i '/KAFKA_SASL_PASSWORD_FILE is required/d' cmd/metering-service/main.go
+          sed -i '/DB_URL_FILE is required/d' cmd/metering-service/main.go
           GOTOOLCHAIN=auto go build -o /tmp/metering-service-bin ./cmd/metering-service
 
       - name: Build cost consumer
@@ -107,29 +104,40 @@ jobs:
           python3 inventory-watcher/scripts/oidc_server.py &
           sleep 2
 
-      - name: Start Redpanda
+      - name: Start Kafka (KRaft single-node)
         run: |
-          docker run -d --name redpanda --network host \
-            redpandadata/redpanda:latest \
-            redpanda start --mode dev-container \
-              --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092 \
-              --advertise-kafka-addr internal://127.0.0.1:9092,external://127.0.0.1:19092 \
-              --smp 1 --memory 256M --overprovisioned --default-log-level=warn
+          docker run -d --name kafka --network host \
+            -e KAFKA_NODE_ID=1 \
+            -e KAFKA_PROCESS_ROLES=broker,controller \
+            -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:19092,CONTROLLER://0.0.0.0:9093 \
+            -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://127.0.0.1:19092 \
+            -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+            -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT \
+            -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@127.0.0.1:9093 \
+            -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+            -e CLUSTER_ID=osac-kafka-ci-test-001 \
+            apache/kafka:latest
 
-      - name: Install rpk and wait for Redpanda
+      - name: Wait for Kafka and create topics
         run: |
-          curl -sLO https://github.com/redpanda-data/redpanda/releases/latest/download/rpk-linux-amd64.zip
-          unzip -o rpk-linux-amd64.zip -d /tmp/rpk
-          sudo mv /tmp/rpk/rpk /usr/local/bin/rpk
-          for i in $(seq 1 30); do
-            rpk cluster info --brokers 127.0.0.1:19092 && break || sleep 2
+          for i in $(seq 1 60); do
+            docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+              --bootstrap-server 127.0.0.1:19092 --list 2>/dev/null && break || sleep 2
           done
-          rpk topic create osac.metering.lifecycle --brokers 127.0.0.1:19092
+          docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server 127.0.0.1:19092 \
+            --create --topic osac.metering.lifecycle --partitions 1 --replication-factor 1
+          echo "Kafka ready, topic created"
 
-      - name: Create OSAC database
+      - name: Create OSAC databases
         run: |
           PGPASSWORD=pass psql -h 127.0.0.1 -p 5434 -U user -d costdb \
             -c "CREATE DATABASE osacdb;" || true
+          PGPASSWORD=pass psql -h 127.0.0.1 -p 5434 -U user -d costdb \
+            -c "CREATE DATABASE metering;" || true
+          echo "postgres://user:pass@127.0.0.1:5434/metering?sslmode=disable" > /tmp/metering-db-url
 
       - name: Start fulfillment-service
         env:
@@ -183,6 +191,7 @@ jobs:
           KAFKA_BROKERS: 127.0.0.1:19092
           KAFKA_TLS_DISABLE: "true"
           KAFKA_TOPIC: osac.metering.lifecycle
+          DB_URL_FILE: /tmp/metering-db-url
           HEALTH_ADDR: ":8090"
           GRPC_ENFORCE_ALPN_ENABLED: "false"
         run: |
@@ -220,5 +229,5 @@ jobs:
           echo "=== Cost consumer ==="
           tail -30 /tmp/cost-consumer-osac.log || true
           echo ""
-          echo "=== Redpanda ==="
-          docker logs redpanda --tail 30 || true
+          echo "=== Kafka ==="
+          docker logs kafka --tail 30 || true

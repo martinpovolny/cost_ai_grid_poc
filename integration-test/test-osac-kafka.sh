@@ -113,10 +113,17 @@ curl -sf "$OSAC/api/fulfillment/v1/instance_types" "${AUTH[@]}" > /dev/null 2>&1
 }
 echo "  OSAC: OK"
 
-rpk cluster info --brokers "$BROKER" > /dev/null 2>&1 || {
-    echo "ERROR: Redpanda not reachable at $BROKER"; exit 1
-}
-echo "  Redpanda: OK"
+kafka_ready=false
+if command -v rpk > /dev/null 2>&1; then
+    rpk cluster info --brokers "$BROKER" > /dev/null 2>&1 && kafka_ready=true
+fi
+if [ "$kafka_ready" != "true" ] && docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BROKER" --list > /dev/null 2>&1; then
+    kafka_ready=true
+fi
+if [ "$kafka_ready" != "true" ]; then
+    echo "ERROR: Kafka not reachable at $BROKER"; exit 1
+fi
+echo "  Kafka: OK"
 
 db_query "SELECT 1" > /dev/null 2>&1 || {
     echo "ERROR: Postgres not reachable"; exit 1
@@ -253,8 +260,14 @@ echo ""
 echo "--- Step 4: Verify event pipeline (waiting 15s) ---"
 sleep 15
 
-# Check Kafka topic
-KAFKA_MSG=$(timeout 10 rpk topic consume osac.metering.lifecycle --brokers "$BROKER" -o start -f '%v\n' -n 10 2>/dev/null)
+# Check Kafka topic (rpk or kafka-console-consumer)
+if command -v rpk > /dev/null 2>&1; then
+    KAFKA_MSG=$(timeout 10 rpk topic consume osac.metering.lifecycle --brokers "$BROKER" -o start -f '%v\n' -n 10 2>/dev/null)
+else
+    KAFKA_MSG=$(timeout 10 docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+        --bootstrap-server "$BROKER" --topic osac.metering.lifecycle \
+        --from-beginning --max-messages 10 --timeout-ms 8000 2>/dev/null)
+fi
 VM_IN_KAFKA=$(echo "$KAFKA_MSG" | grep -c "$VM_ID" || echo "0")
 check_ge "VM event on Kafka topic" 1 "$VM_IN_KAFKA"
 
