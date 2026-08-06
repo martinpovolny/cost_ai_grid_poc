@@ -68,11 +68,14 @@ jobs:
           git clone --depth 1 https://github.com/osac-project/osac.git /tmp/osac
           cd /tmp/osac/osac-metering/metering-service
           echo "metering-service at $(git rev-parse --short HEAD)"
-          # Patch for Redpanda dev testing (no SASL, no TLS, no idempotent)
+          # Patch for Redpanda dev testing (no SASL, no idempotent producer)
           sed -i 's/return fmt.Errorf("KAFKA_SASL_USERNAME is required")/\/\/ disabled for CI/' cmd/metering-service/main.go || true
           sed -i 's/return fmt.Errorf("KAFKA_SASL_PASSWORD_FILE is required")/\/\/ disabled for CI/' cmd/metering-service/main.go || true
-          sed -i 's/config.Producer.Idempotent = true/config.Producer.Idempotent = false/' internal/kafka/connect.go || true
-          sed -i '/config.Net.MaxOpenRequests = 1/d' internal/kafka/connect.go || true
+          # NewProducerConfig lives in publisher.go
+          sed -i 's/config.Producer.Idempotent = true/config.Producer.Idempotent = false/' internal/kafka/publisher.go || true
+          sed -i '/config.Net.MaxOpenRequests = 1/d' internal/kafka/publisher.go || true
+          echo "Patched publisher.go:"
+          grep -n "Idempotent\|MaxOpenRequests" internal/kafka/publisher.go || echo "(lines removed)"
           GOTOOLCHAIN=auto go build -o /tmp/metering-service-bin ./cmd/metering-service
 
       - name: Build cost consumer
