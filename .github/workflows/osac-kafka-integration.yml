@@ -137,7 +137,8 @@ jobs:
             -c "CREATE DATABASE osacdb;" || true
           PGPASSWORD=pass psql -h 127.0.0.1 -p 5434 -U user -d costdb \
             -c "CREATE DATABASE metering;" || true
-          echo "postgres://user:pass@127.0.0.1:5434/metering?sslmode=disable" > /tmp/metering-db-url
+          mkdir -p /tmp/metering-db-url
+          echo "postgres://user:pass@127.0.0.1:5434/metering?sslmode=disable" > /tmp/metering-db-url/url
 
       - name: Start fulfillment-service
         env:
