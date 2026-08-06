@@ -1698,3 +1698,4 @@ func (h *APIHandler) RegisterDebugRoutes(mux *http.ServeMux) {
 		}
 	})
 }
+
