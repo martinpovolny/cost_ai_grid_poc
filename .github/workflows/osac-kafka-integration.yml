@@ -32,7 +32,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: user
           POSTGRES_PASSWORD: pass
@@ -208,10 +208,23 @@ jobs:
             --metrics-listener-address=127.0.0.1:8004 \
             > /tmp/osac-rest.log 2>&1 &
 
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:8011/api/fulfillment/v1/instance_types \
-              -H "Authorization: Bearer $(cat /tmp/osac_token.txt)" && break || sleep 2
+          READY=false
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8011/api/fulfillment/v1/instance_types \
+              -H "Authorization: Bearer $(cat /tmp/osac_token.txt)" > /dev/null 2>&1; then
+              READY=true
+              break
+            fi
+            sleep 2
           done
+          if [ "$READY" != "true" ]; then
+            echo "ERROR: OSAC fulfillment-service not ready after 120s"
+            echo "=== gRPC log ==="
+            tail -30 /tmp/osac-grpc.log || true
+            echo "=== REST log ==="
+            tail -30 /tmp/osac-rest.log || true
+            exit 1
+          fi
           echo "OSAC fulfillment-service ready"
 
       - name: Start metering-service
@@ -226,9 +239,19 @@ jobs:
           GRPC_ENFORCE_ALPN_ENABLED: "false"
         run: |
           /tmp/metering-service-bin > /tmp/metering-service.log 2>&1 &
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:8090/healthz && break || sleep 2
+          READY=false
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8090/healthz > /dev/null 2>&1; then
+              READY=true
+              break
+            fi
+            sleep 2
           done
+          if [ "$READY" != "true" ]; then
+            echo "ERROR: metering-service not ready after 120s"
+            tail -30 /tmp/metering-service.log || true
+            exit 1
+          fi
           echo "OSAC metering-service ready"
 
       - name: Run OSAC → Kafka integration test
