@@ -204,7 +204,7 @@ jobs:
           /tmp/metering-service-bin > /tmp/metering-service.log 2>&1 &
           READY=false
           for i in $(seq 1 90); do
-            if grep -q "starting watch consumer" /tmp/metering-service.log 2>/dev/null; then
+            if grep -q "service ready" /tmp/metering-service.log 2>/dev/null; then
               READY=true
               break
             fi
