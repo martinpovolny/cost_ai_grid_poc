@@ -207,7 +207,7 @@ jobs:
           GRPC_ENFORCE_ALPN_ENABLED: "false"
         run: |
           rm -f /tmp/metering-service.log
-          /tmp/metering-service-bin > /tmp/metering-service.log 2>&1 &
+          stdbuf -oL /tmp/metering-service-bin > /tmp/metering-service.log 2>&1 &
           MS_PID=$!
           READY=false
           for i in $(seq 1 90); do
@@ -227,6 +227,9 @@ jobs:
             cat /tmp/metering-service.log || true
             exit 1
           fi
+          echo "=== Metering-service log at ready ==="
+          cat /tmp/metering-service.log
+          echo "=== end ==="
           # Wait for Watch stream to establish
           sleep 5
           echo "OSAC metering-service ready (PID $MS_PID)"
