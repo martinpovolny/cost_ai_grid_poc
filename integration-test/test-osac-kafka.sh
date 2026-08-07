@@ -276,23 +276,6 @@ sleep 15
 KAFKA_MSG=$(kafka_consume osac.metering.lifecycle 10)
 VM_IN_KAFKA=$(echo "$KAFKA_MSG" | grep -c "$VM_ID" || echo "0")
 
-# If the metering-service Watch stream has proto compatibility issues with the
-# fulfillment-service (upstream OSAC concern), produce the event directly.
-if [ "$VM_IN_KAFKA" -eq 0 ] 2>/dev/null; then
-    echo "  WARN: metering-service did not publish event (proto mismatch?)"
-    echo "  Producing CloudEvent directly to validate consumer..."
-    VM_TIME=$(echo "$VM_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('metadata',{}).get('creation_timestamp','$(date -u +%Y-%m-%dT%H:%M:%SZ)'))" 2>/dev/null)
-    CE='{"specversion":"1.0","id":"ci-evt-'$VM_ID'","source":"osac-metering","type":"osac.resource.created.v1","datacontenttype":"application/json","time":"'$VM_TIME'","osacresourceid":"'$VM_ID'","osacresourcetype":"compute_instance","osactenant":"shared","data":{"resource_id":"'$VM_ID'","resource_type":"compute_instance","tenant_id":"shared","current_state":"RUNNING","transition_time":"'$VM_TIME'","billing_dimensions":{"instance_type":"'$IT_NAME'"},"schema_version":"v1"}}'
-    if command -v rpk > /dev/null 2>&1; then
-        echo "$CE" | rpk topic produce osac.metering.lifecycle --brokers "$BROKER" 2>/dev/null
-    elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q kafka; then
-        echo "$CE" | docker exec -i kafka /opt/kafka/bin/kafka-console-producer.sh \
-            --bootstrap-server "$BROKER" --topic osac.metering.lifecycle 2>/dev/null
-    fi
-    sleep 5
-    KAFKA_MSG=$(kafka_consume osac.metering.lifecycle 10)
-    VM_IN_KAFKA=$(echo "$KAFKA_MSG" | grep -c "$VM_ID" || echo "0")
-fi
 check_ge "VM event on Kafka topic" 1 "$VM_IN_KAFKA"
 
 # Check consumer logs

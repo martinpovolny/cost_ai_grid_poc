@@ -24,8 +24,13 @@ on:
 permissions:
   contents: read
 
-# Pin OSAC fulfillment-service to v0.0.79 tag (latest published proto).
-# The metering-service protos are regenerated from this version at build time.
+# Pin OSAC to compatible proto versions.
+# The fulfillment-service uses string fields (v0.0.82 protos).
+# The metering-service must use v0.0.82 protos (before typed references regen).
+# Bump both together when OSAC publishes v0.0.83+ with typed references.
+env:
+  # Parent of 6d635ef9 (OSAC-1330: Regenerate metering proto for typed references)
+  OSAC_METERING_REF: 8f25533fcc888517818378f14a2d57e64d9ce331
 
 jobs:
   osac-kafka:
@@ -61,16 +66,18 @@ jobs:
 
       - name: Clone and build fulfillment-service
         run: |
-          git clone --depth 1 --branch v0.0.79 \
-            https://github.com/osac-project/fulfillment-service.git /tmp/fulfillment-service
+          git clone --depth 1 https://github.com/osac-project/fulfillment-service.git /tmp/fulfillment-service
           cd /tmp/fulfillment-service
-          echo "fulfillment-service at v0.0.79 ($(git rev-parse --short HEAD))"
+          echo "fulfillment-service at $(git rev-parse --short HEAD)"
           GOTOOLCHAIN=auto go build -o /tmp/fulfillment-service-bin ./cmd/fulfillment-service
 
       - name: Clone and build metering-service
         run: |
-          git clone --depth 1 https://github.com/osac-project/osac.git /tmp/osac
-          cd /tmp/osac/osac-metering/metering-service
+          git clone --depth 10 https://github.com/osac-project/osac.git /tmp/osac
+          cd /tmp/osac
+          git checkout "$OSAC_METERING_REF"
+          cd osac-metering/metering-service
+          rm -f internal/api/osac/private/v1/baremetal_instance_type_type.pb.go
           echo "metering-service at $(git rev-parse --short HEAD)"
           # Patch for plain Kafka (no SASL, no TLS, skip DB validation)
           sed -i '/KAFKA_SASL_USERNAME is required/d' cmd/metering-service/main.go
