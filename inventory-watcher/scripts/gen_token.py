@@ -15,10 +15,13 @@ FS_DIR = os.environ.get("FULFILLMENT_SERVICE_DIR",
     os.path.join(os.path.dirname(__file__), "..", "..", "fulfillment-service"))
 CERT_DIR = os.path.abspath(FS_DIR)
 
-key_path = os.path.join(CERT_DIR, "server.key")
+key_path = os.environ.get("OIDC_KEY", os.path.join(CERT_DIR, "server.key"))
 if not os.path.exists(key_path):
     print(f"ERROR: {key_path} not found.", file=sys.stderr)
     sys.exit(1)
+
+ISSUER = os.environ.get("OIDC_ISSUER", "https://localhost:8013")
+TOKEN_HOURS = int(os.environ.get("TOKEN_HOURS", "24"))
 
 with open(key_path, "rb") as f:
     private_key = serialization.load_pem_private_key(f.read(), password=None)
@@ -40,12 +43,12 @@ kid = base64.urlsafe_b64encode(
 now = datetime.datetime.now(datetime.timezone.utc)
 token = jwt.encode(
     {
-        "iss": "https://localhost:8013",
+        "iss": ISSUER,
         "sub": "admin",
         "preferred_username": "admin",
         "groups": ["admins"],
         "iat": now,
-        "exp": now + datetime.timedelta(hours=24),
+        "exp": now + datetime.timedelta(hours=TOKEN_HOURS),
     },
     private_key,
     algorithm="RS256",

@@ -269,3 +269,70 @@ struct tag, not `has_access` (snake_case).
 **Status:** Handler accepts both formats — IPP fields take precedence
 when present, mock fields used as fallback. Both produce the same 3
 meters (`maas_tokens_in`, `maas_tokens_out`, `maas_requests`).
+
+---
+
+## OSAC Metering-Service v1 — Resource Lifecycle (OSAC-985)
+
+**Types:**
+- `osac.resource.created.v1` — resource provisioned
+- `osac.resource.deleted.v1` — resource deleted
+- `osac.resource.started.v1` — VM started (RUNNING)
+- `osac.resource.suspended.v1` — VM stopped/paused/failed
+- `osac.resource.updated.v1` — generic update
+
+**Source:** [osac-metering service](https://github.com/osac-project/osac/tree/main/osac-metering/metering-service)
+**Our handler:** `internal/api/handler.go` → `processOSACResourceEvent`
+**Topic:** `osac.metering.lifecycle`
+
+```json
+{
+  "specversion": "1.0",
+  "id": "<uuid>",
+  "source": "osac-metering",
+  "type": "osac.resource.created.v1",
+  "datacontenttype": "application/json",
+  "time": "<ISO8601>",
+  "osacresourceid": "<resource-uuid>",
+  "osacresourcetype": "compute_instance",
+  "osactenant": "<tenant-id>",
+  "osacproject": "<project-id>",
+  "data": {
+    "resource_id": "<resource-uuid>",
+    "resource_type": "compute_instance",
+    "tenant_id": "<tenant-id>",
+    "project_id": null,
+    "catalog_item_id": null,
+    "template_id": "<template-uuid>",
+    "previous_state": null,
+    "current_state": "RUNNING",
+    "transition_time": "<ISO8601-nano>",
+    "duration_seconds": null,
+    "billing_dimensions": {
+      "instance_type": "standard-4-8",
+      "image_ref": "quay.io/fedora/fedora:latest",
+      "boot_disk_size_gib": 50
+    },
+    "schema_version": "v1"
+  }
+}
+```
+
+### CloudEvent extensions
+
+| Extension | Description |
+|-----------|-------------|
+| `osacresourceid` | Resource UUID (partition key for per-resource ordering) |
+| `osacresourcetype` | Resource type: `compute_instance`, `cluster_order`, etc. |
+| `osactenant` | Tenant identifier |
+| `osacproject` | Project identifier (optional) |
+
+### What we do with it
+
+For `compute_instance` resources, we upsert an `inventory_compute_instance`
+record with state and instance_type from billing_dimensions. The existing
+metering sweep then meters the resource on its normal 60s cycle.
+
+**Authoritative source:**
+[`metering-service/internal/events/mapper.go`](https://github.com/osac-project/osac/blob/main/osac-metering/metering-service/internal/events/mapper.go) —
+`MapWatchEvent` function and `meteringData` struct.

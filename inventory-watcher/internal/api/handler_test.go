@@ -2098,3 +2098,130 @@ func TestWallet_DeductionViaRatingSweep(t *testing.T) {
 		t.Errorf("expected 2 ledger entries (top-up + deduction), got %d", len(ledger))
 	}
 }
+
+func TestProcessKafkaEvent_OSACv1ResourceCreated(t *testing.T) {
+	ctx := context.Background()
+	h := api.NewAPIHandler(testStore, testMeter, nil, nil, testLogger)
+
+	ts := time.Now().UnixNano()
+	resourceID := fmt.Sprintf("vm-osac-v1-%d", ts)
+	eventID := fmt.Sprintf("evt-osac-v1-%d", ts)
+
+	payload := fmt.Sprintf(`{
+		"specversion": "1.0",
+		"id": "%s",
+		"source": "osac-metering",
+		"type": "osac.resource.created.v1",
+		"datacontenttype": "application/json",
+		"time": "%s",
+		"osacresourceid": "%s",
+		"osacresourcetype": "compute_instance",
+		"osactenant": "test-tenant-v1",
+		"data": {
+			"resource_id": "%s",
+			"resource_type": "compute_instance",
+			"tenant_id": "test-tenant-v1",
+			"project_id": null,
+			"catalog_item_id": null,
+			"template_id": "tpl-123",
+			"previous_state": null,
+			"current_state": "RUNNING",
+			"transition_time": "%s",
+			"duration_seconds": null,
+			"billing_dimensions": {
+				"instance_type": "standard-4-8",
+				"image_ref": "quay.io/fedora/fedora:latest",
+				"boot_disk_size_gib": 50
+			},
+			"schema_version": "v1"
+		}
+	}`, eventID, time.Now().UTC().Format(time.RFC3339), resourceID,
+		resourceID, time.Now().UTC().Format(time.RFC3339Nano))
+
+	if err := h.ProcessKafkaEvent(ctx, "osac.metering.lifecycle", []byte(payload)); err != nil {
+		t.Fatalf("ProcessKafkaEvent failed: %v", err)
+	}
+
+	// Verify compute instance was upserted
+	ci, err := testStore.GetComputeInstance(ctx, resourceID)
+	if err != nil {
+		t.Fatalf("GetComputeInstance failed: %v", err)
+	}
+	if ci.State != "RUNNING" {
+		t.Errorf("state: got %q, want RUNNING", ci.State)
+	}
+	if ci.InstanceType != "standard-4-8" {
+		t.Errorf("instance_type: got %q, want standard-4-8", ci.InstanceType)
+	}
+	if ci.Tenant != "test-tenant-v1" {
+		t.Errorf("tenant: got %q, want test-tenant-v1", ci.Tenant)
+	}
+}
+
+func TestProcessKafkaEvent_OSACv1ResourceDeleted(t *testing.T) {
+	ctx := context.Background()
+	h := api.NewAPIHandler(testStore, testMeter, nil, nil, testLogger)
+
+	ts := time.Now().UnixNano()
+	resourceID := fmt.Sprintf("vm-osac-v1-del-%d", ts)
+
+	// First create
+	createPayload := fmt.Sprintf(`{
+		"specversion": "1.0",
+		"id": "create-%d",
+		"source": "osac-metering",
+		"type": "osac.resource.created.v1",
+		"time": "%s",
+		"osacresourceid": "%s",
+		"osacresourcetype": "compute_instance",
+		"osactenant": "test-tenant-v1",
+		"data": {
+			"resource_id": "%s",
+			"resource_type": "compute_instance",
+			"tenant_id": "test-tenant-v1",
+			"current_state": "RUNNING",
+			"transition_time": "%s",
+			"billing_dimensions": {"instance_type": "standard-4-8"},
+			"schema_version": "v1"
+		}
+	}`, ts, time.Now().UTC().Format(time.RFC3339), resourceID,
+		resourceID, time.Now().UTC().Format(time.RFC3339Nano))
+
+	if err := h.ProcessKafkaEvent(ctx, "osac.metering.lifecycle", []byte(createPayload)); err != nil {
+		t.Fatalf("create event failed: %v", err)
+	}
+
+	// Then delete
+	deletePayload := fmt.Sprintf(`{
+		"specversion": "1.0",
+		"id": "delete-%d",
+		"source": "osac-metering",
+		"type": "osac.resource.deleted.v1",
+		"time": "%s",
+		"osacresourceid": "%s",
+		"osacresourcetype": "compute_instance",
+		"osactenant": "test-tenant-v1",
+		"data": {
+			"resource_id": "%s",
+			"resource_type": "compute_instance",
+			"tenant_id": "test-tenant-v1",
+			"current_state": "RUNNING",
+			"transition_time": "%s",
+			"billing_dimensions": {"instance_type": "standard-4-8"},
+			"schema_version": "v1"
+		}
+	}`, ts, time.Now().UTC().Format(time.RFC3339), resourceID,
+		resourceID, time.Now().UTC().Format(time.RFC3339Nano))
+
+	if err := h.ProcessKafkaEvent(ctx, "osac.metering.lifecycle", []byte(deletePayload)); err != nil {
+		t.Fatalf("delete event failed: %v", err)
+	}
+
+	ci, err := testStore.GetComputeInstance(ctx, resourceID)
+	if err != nil {
+		t.Fatalf("GetComputeInstance failed: %v", err)
+	}
+	if ci.State != "DELETING" {
+		t.Errorf("state after delete: got %q, want DELETING", ci.State)
+	}
+}
