@@ -157,8 +157,9 @@ EOF
 # Create namespace
 oc new-project postgres
 
-# Grant SCC
-oc adm policy add-scc-to-user nonroot-v2 -z cnpg-cloudnative-pg -n postgres
+# Grant SCC — CNPG pods run as UID 10001 (postgres), which requires anyuid.
+# nonroot-v2 is insufficient because it only allows the namespace UID range.
+oc adm policy add-scc-to-user anyuid -z cnpg-cloudnative-pg -n postgres
 
 # Install operator
 helm upgrade cnpg oci://ghcr.io/cloudnative-pg/charts/cloudnative-pg \
