@@ -206,9 +206,16 @@ jobs:
           HEALTH_ADDR: ":8090"
           GRPC_ENFORCE_ALPN_ENABLED: "false"
         run: |
+          rm -f /tmp/metering-service.log
           /tmp/metering-service-bin > /tmp/metering-service.log 2>&1 &
+          MS_PID=$!
           READY=false
           for i in $(seq 1 90); do
+            if ! kill -0 $MS_PID 2>/dev/null; then
+              echo "ERROR: metering-service process died"
+              cat /tmp/metering-service.log || true
+              exit 1
+            fi
             if grep -q "service ready" /tmp/metering-service.log 2>/dev/null; then
               READY=true
               break
@@ -220,7 +227,9 @@ jobs:
             cat /tmp/metering-service.log || true
             exit 1
           fi
-          echo "OSAC metering-service ready"
+          # Wait for Watch stream to establish
+          sleep 5
+          echo "OSAC metering-service ready (PID $MS_PID)"
 
       - name: Run OSAC → Kafka integration test
         run: bash integration-test/test-osac-kafka.sh
