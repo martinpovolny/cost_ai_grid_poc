@@ -24,12 +24,9 @@ on:
 permissions:
   contents: read
 
-# Pin OSAC components to known-compatible versions. The metering-service
-# generates protos from buf.build/osac-project/private-api:v0.0.83 — the
-# fulfillment-service must match. Bump together when adopting new versions.
-env:
-  OSAC_FULFILLMENT_REF: c4110b28a14d4a3b3926ae5360e2cd59c15430d5
-  OSAC_METERING_REF: 76c2261233c9f85caa73ff20e70e5da6e98b2b1e
+# Both OSAC repos track HEAD of main. Proto definitions must be compatible
+# between them — if they diverge, the Watch stream will fail with proto
+# unmarshal errors. This is an upstream OSAC concern.
 
 jobs:
   osac-kafka:
@@ -65,24 +62,22 @@ jobs:
 
       - name: Clone and build fulfillment-service
         run: |
-          git clone https://github.com/osac-project/fulfillment-service.git /tmp/fulfillment-service
+          git clone --depth 1 https://github.com/osac-project/fulfillment-service.git /tmp/fulfillment-service
           cd /tmp/fulfillment-service
-          git checkout "$OSAC_FULFILLMENT_REF"
           echo "fulfillment-service at $(git rev-parse --short HEAD)"
           GOTOOLCHAIN=auto go build -o /tmp/fulfillment-service-bin ./cmd/fulfillment-service
 
       - name: Clone and build metering-service
         run: |
-          git clone --single-branch --branch main https://github.com/osac-project/osac.git /tmp/osac
-          cd /tmp/osac
-          git checkout "$OSAC_METERING_REF"
-          cd osac-metering/metering-service
+          git clone --depth 1 https://github.com/osac-project/osac.git /tmp/osac
+          cd /tmp/osac/osac-metering/metering-service
           echo "metering-service at $(git rev-parse --short HEAD)"
-          # Patch for plain Kafka (no SASL, no TLS, no mandatory DB)
+          # Patch for plain Kafka (no SASL, no TLS, skip DB validation)
           sed -i '/KAFKA_SASL_USERNAME is required/d' cmd/metering-service/main.go
           sed -i '/KAFKA_SASL_PASSWORD_FILE is required/d' cmd/metering-service/main.go
-          sed -i 's/^func configureSASL.*/func configureSASL(sc *sarama.Config, user, passFile string) error {\n\tif user == "" { return nil }/' internal/kafka/connect.go
-          sed -i 's/sc.Net.TLS.Enable = .*$/sc.Net.TLS.Enable = os.Getenv("KAFKA_TLS_DISABLE") != "true"/' internal/kafka/connect.go
+          sed -i '/DB_URL_FILE is required/d' cmd/metering-service/main.go
+          sed -i '/^func ConfigureSASL/,/^}/{s/^func ConfigureSASL.*/func ConfigureSASL(sc *sarama.Config, user, passFile string) error {\n\tif user == "" { return nil }/}' internal/kafka/connect.go
+          sed -i 's/sc.Net.TLS.Enable = true/sc.Net.TLS.Enable = os.Getenv("KAFKA_TLS_DISABLE") != "true"/' internal/kafka/connect.go
           GOTOOLCHAIN=auto go build -o /tmp/metering-service-bin ./cmd/metering-service
 
       - name: Build cost consumer
@@ -143,10 +138,14 @@ jobs:
           done
           echo "Kafka ready, topics created"
 
-      - name: Create OSAC database
+      - name: Create OSAC databases
         run: |
           PGPASSWORD=pass psql -h 127.0.0.1 -p 5434 -U user -d costdb \
             -c "CREATE DATABASE osacdb;" || true
+          PGPASSWORD=pass psql -h 127.0.0.1 -p 5434 -U user -d costdb \
+            -c "CREATE DATABASE metering;" || true
+          mkdir -p /tmp/metering-db-url
+          echo "postgres://user:pass@127.0.0.1:5434/metering?sslmode=disable" > /tmp/metering-db-url/url
 
       - name: Start fulfillment-service
         env:
@@ -198,6 +197,7 @@ jobs:
           KAFKA_BROKERS: 127.0.0.1:19092
           KAFKA_TLS_DISABLE: "true"
           KAFKA_TOPIC: osac.metering.lifecycle
+          DB_URL_FILE: /tmp/metering-db-url
           HEALTH_ADDR: ":8090"
           GRPC_ENFORCE_ALPN_ENABLED: "false"
         run: |
