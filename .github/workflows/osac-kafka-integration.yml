@@ -73,11 +73,9 @@ jobs:
 
       - name: Clone and build metering-service
         run: |
-          git init /tmp/osac
+          git clone --single-branch --branch main https://github.com/osac-project/osac.git /tmp/osac
           cd /tmp/osac
-          git remote add origin https://github.com/osac-project/osac.git
-          git fetch --depth=1 origin "$OSAC_METERING_REF"
-          git checkout FETCH_HEAD
+          git checkout "$OSAC_METERING_REF"
           cd osac-metering/metering-service
           echo "metering-service at $(git rev-parse --short HEAD)"
           # Patch for plain Kafka (no SASL, no TLS, no mandatory DB)
