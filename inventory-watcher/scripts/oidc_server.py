@@ -19,16 +19,17 @@ import os
 import sys
 from cryptography.hazmat.primitives import serialization
 
-ISSUER = "https://localhost:8013"
-PORT = 8013
+PORT = int(os.environ.get("OIDC_PORT", "8013"))
+ISSUER = os.environ.get("OIDC_ISSUER", f"https://localhost:{PORT}")
+BIND_ADDR = os.environ.get("OIDC_BIND", "localhost")
 
-# Look for certs in the fulfillment-service directory.
+# Look for certs: OIDC_CERT/OIDC_KEY override, then FULFILLMENT_SERVICE_DIR fallback.
 FS_DIR = os.environ.get("FULFILLMENT_SERVICE_DIR",
     os.path.join(os.path.dirname(__file__), "..", "..", "fulfillment-service"))
 CERT_DIR = os.path.abspath(FS_DIR)
 
-key_path = os.path.join(CERT_DIR, "server.key")
-crt_path = os.path.join(CERT_DIR, "server.crt")
+key_path = os.environ.get("OIDC_KEY", os.path.join(CERT_DIR, "server.key"))
+crt_path = os.environ.get("OIDC_CERT", os.path.join(CERT_DIR, "server.crt"))
 
 if not os.path.exists(key_path):
     print(f"ERROR: {key_path} not found. Generate TLS certs first.", file=sys.stderr)
@@ -93,10 +94,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ctx.load_cert_chain(crt_path, key_path)
 
-server = http.server.HTTPServer(("localhost", PORT), Handler)
+server = http.server.HTTPServer((BIND_ADDR, PORT), Handler)
 server.socket = ctx.wrap_socket(server.socket, server_side=True)
 
-print(f"OIDC server listening at {ISSUER}")
+print(f"OIDC server listening on {BIND_ADDR}:{PORT} (issuer: {ISSUER})")
 print(f"  kid: {KID}")
-print(f"  certs: {CERT_DIR}")
+print(f"  certs: {key_path}")
 server.serve_forever()
