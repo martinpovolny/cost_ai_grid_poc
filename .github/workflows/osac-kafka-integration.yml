@@ -76,8 +76,13 @@ jobs:
           sed -i '/KAFKA_SASL_USERNAME is required/d' cmd/metering-service/main.go
           sed -i '/KAFKA_SASL_PASSWORD_FILE is required/d' cmd/metering-service/main.go
           sed -i '/DB_URL_FILE is required/d' cmd/metering-service/main.go
-          sed -i '/^func ConfigureSASL/,/^}/{s/^func ConfigureSASL.*/func ConfigureSASL(sc *sarama.Config, user, passFile string) error {\n\tif user == "" { return nil }/}' internal/kafka/connect.go
+          # Add early return for empty SASL user (skip SASL entirely)
+          sed -i '/^func ConfigureSASL/a\\tif user == "" { return nil }' internal/kafka/connect.go
           sed -i 's/sc.Net.TLS.Enable = true/sc.Net.TLS.Enable = os.Getenv("KAFKA_TLS_DISABLE") != "true"/' internal/kafka/connect.go
+          echo "=== Patched ConfigureSASL ==="
+          head -3 internal/kafka/connect.go | grep -A2 ConfigureSASL || sed -n '78,81p' internal/kafka/connect.go
+          echo "=== Patched TLS ==="
+          grep "TLS.Enable" internal/kafka/connect.go
           GOTOOLCHAIN=auto go build -o /tmp/metering-service-bin ./cmd/metering-service
 
       - name: Build cost consumer
