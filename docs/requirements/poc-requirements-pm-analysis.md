@@ -72,7 +72,7 @@ Demonstrate Cost Management running on-premise, driven by OSAC heartbeat events,
 - ✅ Can demonstrate end-to-end flow: consumption → event → ingestion → cost report
 
 **Current Implementation Status**
-- CRC (CodeReady Containers) deployment is documented and tested: [deployment checklist](../dev/crc-deployment-checklist.md), [full stack guide](../dev/crc-full-deployment.md), [OSAC-on-CRC guide](../dev/crc-osac-deployment.md), [dev setup guide](../dev/crc-dev-setup.md)
+- CRC (CodeReady Containers) deployment is documented and tested: [deployment guide](../dev/crc-full-deployment.md)
 - CRC footprint reduced (single CNPG instance) to fit demo RAM budgets
 - Load-testing / table-lifecycle / sizing docs landed for demo-scale operations ([performance next steps](../operations/performance-next-steps.md))
 - The RHCM Helm chart / OLM packaging for a true production on-prem deployment has **not started** — this is explicitly RHCM platform team scope, not the consumer component built in this PoC
