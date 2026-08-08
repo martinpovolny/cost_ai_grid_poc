@@ -24,13 +24,15 @@ on:
 permissions:
   contents: read
 
-# Pin OSAC to compatible proto versions.
-# The fulfillment-service uses string fields (v0.0.82 protos).
-# The metering-service must use v0.0.82 protos (before typed references regen).
-# Bump both together when OSAC publishes v0.0.83+ with typed references.
+# WHY A FORK: The OSAC metering-service (osac-project/osac) regenerated its
+# proto definitions to use typed references (v0.0.83), but the
+# fulfillment-service hasn't published a matching proto tag yet — it still
+# uses string fields. The wire-format mismatch causes Watch stream unmarshal
+# errors. We pin the metering-service to our fork at the commit before the
+# regen (tag metering-v0.0.82-compat). Once the fulfillment-service publishes
+# v0.0.83+ protos, switch OSAC_METERING_REPO back to osac-project/osac and
+# remove the tag pin.
 env:
-  # Tag on our fork, before OSAC-1330 typed references regen.
-  # Bump when fulfillment-service publishes v0.0.83+ protos.
   OSAC_METERING_REPO: https://github.com/martinpovolny/osac.git
   OSAC_METERING_TAG: metering-v0.0.82-compat
 
