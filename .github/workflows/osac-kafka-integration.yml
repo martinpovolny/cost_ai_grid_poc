@@ -29,8 +29,10 @@ permissions:
 # The metering-service must use v0.0.82 protos (before typed references regen).
 # Bump both together when OSAC publishes v0.0.83+ with typed references.
 env:
-  # Parent of 6d635ef9 (OSAC-1330: Regenerate metering proto for typed references)
-  OSAC_METERING_REF: 8f25533fcc888517818378f14a2d57e64d9ce331
+  # Tag on our fork, before OSAC-1330 typed references regen.
+  # Bump when fulfillment-service publishes v0.0.83+ protos.
+  OSAC_METERING_REPO: https://github.com/martinpovolny/osac.git
+  OSAC_METERING_TAG: metering-v0.0.82-compat
 
 jobs:
   osac-kafka:
@@ -73,10 +75,8 @@ jobs:
 
       - name: Clone and build metering-service
         run: |
-          git clone --depth 200 https://github.com/osac-project/osac.git /tmp/osac
-          cd /tmp/osac
-          git checkout "$OSAC_METERING_REF"
-          cd osac-metering/metering-service
+          git clone --depth 1 --branch "$OSAC_METERING_TAG" "$OSAC_METERING_REPO" /tmp/osac
+          cd /tmp/osac/osac-metering/metering-service
           rm -f internal/api/osac/private/v1/baremetal_instance_type_type.pb.go
           echo "metering-service at $(git rev-parse --short HEAD)"
           # Patch for plain Kafka (no SASL, no TLS, skip DB validation)
