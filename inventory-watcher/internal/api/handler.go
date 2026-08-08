@@ -106,6 +106,13 @@ func (h *APIHandler) ProcessKafkaEvent(ctx context.Context, topic string, payloa
 		return fmt.Errorf("kafka: missing id or type")
 	}
 
+	if isOSACv1EventType(ce.Type) || ce.Type == eventTypeInferenceUsage {
+		if ce.OSACResourceID == "" || ce.OSACResourceType == "" || ce.OSACTenant == "" {
+			return fmt.Errorf("kafka: v1 event %s missing required extensions (osacresourceid=%q, osacresourcetype=%q, osactenant=%q)",
+				ce.Type, ce.OSACResourceID, ce.OSACResourceType, ce.OSACTenant)
+		}
+	}
+
 	resourceType, resourceID, tenantID := classifyEvent(ce)
 	fullJSON, _ := json.Marshal(ce)
 
@@ -254,6 +261,30 @@ type vmBillingDimensions struct {
 	InstanceType    *string `json:"instance_type"`
 	ImageRef        *string `json:"image_ref"`
 	BootDiskSizeGiB *int32  `json:"boot_disk_size_gib"`
+}
+
+// clusterBillingDimensions holds cluster_order billing dimensions.
+type clusterBillingDimensions struct {
+	ClusterTemplate string `json:"cluster_template"`
+	ReleaseImage    string `json:"release_image"`
+	Component       string `json:"component"`
+	HostType        string `json:"host_type"`
+	NodeCount       int32  `json:"node_count"`
+}
+
+// maasBillingDimensions holds maas_inference billing dimensions.
+type maasBillingDimensions struct {
+	OrganizationID    string `json:"organization_id"`
+	CostCenter        string `json:"cost_center"`
+	Subscription      string `json:"subscription"`
+	Provider          string `json:"provider"`
+	Model             string `json:"model"`
+	PromptTokens      int64  `json:"prompt_tokens"`
+	CompletionTokens  int64  `json:"completion_tokens"`
+	TotalTokens       int64  `json:"total_tokens"`
+	CachedInputTokens int64  `json:"cached_input_tokens"`
+	ReasoningTokens   int64  `json:"reasoning_tokens"`
+	DurationMs        int64  `json:"duration_ms"`
 }
 
 // computeInstanceEventData matches the OSAC metering collector VMaaS schema.
@@ -699,6 +730,10 @@ func (h *APIHandler) processOSACResourceEvent(ctx context.Context, ce cloudEvent
 	switch md.ResourceType {
 	case "compute_instance":
 		return h.processOSACComputeInstance(ctx, ce, md)
+	case "cluster_order":
+		return h.processOSACClusterOrder(ctx, ce, md)
+	case "maas_inference":
+		return h.processOSACInference(ctx, ce, md)
 	default:
 		h.logger.Info("osac v1: unhandled resource type", "resource_type", md.ResourceType)
 		return nil
@@ -742,6 +777,103 @@ func (h *APIHandler) processOSACComputeInstance(ctx context.Context, ce cloudEve
 		"instance_id", md.ResourceID,
 		"state", state,
 		"instance_type", instanceType,
+	)
+	return nil
+}
+
+func (h *APIHandler) processOSACClusterOrder(ctx context.Context, ce cloudEventInternal, md meteringData) error {
+	state := md.CurrentState
+	if ce.Type == eventTypeResourceDeleted {
+		state = "DELETING"
+	}
+
+	var bd clusterBillingDimensions
+	if len(md.BillingDimensions) > 0 {
+		_ = json.Unmarshal(md.BillingDimensions, &bd)
+	}
+
+	template := ""
+	if md.TemplateID != nil {
+		template = *md.TemplateID
+	}
+	if bd.ClusterTemplate != "" {
+		template = bd.ClusterTemplate
+	}
+
+	if err := h.store.UpsertCluster(ctx, inventory.ClusterRecord{
+		ClusterID:   md.ResourceID,
+		Tenant:      md.TenantID,
+		Template:    template,
+		State:       state,
+		CreatedAt:   ce.Time,
+		LastEventID: ce.ID,
+	}); err != nil {
+		return fmt.Errorf("osac v1: upsert cluster_order: %w", err)
+	}
+
+	h.logger.Info("osac v1: upserted cluster_order",
+		"cluster_id", md.ResourceID,
+		"state", state,
+		"component", bd.Component,
+		"host_type", bd.HostType,
+	)
+	return nil
+}
+
+func (h *APIHandler) processOSACInference(ctx context.Context, ce cloudEventInternal, md meteringData) error {
+	var bd maasBillingDimensions
+	if len(md.BillingDimensions) > 0 {
+		_ = json.Unmarshal(md.BillingDimensions, &bd)
+	}
+
+	modelID := bd.Model
+	if modelID == "" {
+		modelID = md.ResourceID
+	}
+
+	durationSeconds := 0.0
+	if md.DurationSeconds != nil {
+		durationSeconds = *md.DurationSeconds
+	} else if bd.DurationMs > 0 {
+		durationSeconds = float64(bd.DurationMs) / 1000.0
+	}
+
+	tenantID := md.TenantID
+	if tenantID == "" && bd.OrganizationID != "" {
+		tenantID = bd.OrganizationID
+	}
+
+	createdAt := ce.Time.Add(-time.Duration(durationSeconds * float64(time.Second)))
+	if err := h.store.UpsertModel(ctx, inventory.ModelRecord{
+		ModelID:     modelID,
+		Name:        bd.Model,
+		ModelName:   bd.Model,
+		Tenant:      tenantID,
+		State:       "MODEL_STATE_RUNNING",
+		CreatedAt:   createdAt,
+		LastEventID: ce.ID,
+	}); err != nil {
+		return fmt.Errorf("osac v1: upsert maas_inference: %w", err)
+	}
+
+	h.meter.MeterMaaSEvent(ctx, metering.MaaSUsage{
+		ModelID:           modelID,
+		ModelName:         bd.Model,
+		TenantID:          tenantID,
+		TokensIn:          bd.PromptTokens,
+		TokensOut:         bd.CompletionTokens,
+		CachedInputTokens: bd.CachedInputTokens,
+		ReasoningTokens:   bd.ReasoningTokens,
+		Requests:          1,
+		EventTime:         ce.Time,
+		DurationSeconds:   durationSeconds,
+	})
+
+	h.logger.Info("osac v1: metered inference",
+		"model", bd.Model,
+		"tenant", tenantID,
+		"tokens_in", bd.PromptTokens,
+		"tokens_out", bd.CompletionTokens,
 	)
 	return nil
 }
