@@ -45,7 +45,7 @@ HTTP ingest endpoint ──► MaaS / custom events ──►   quota status API
 1. [Full CRC deployment guide](dev/crc-full-deployment.md) — **start here** for OpenShift deployment
    - Steps 1–8: full stack (cert-manager, CloudNativePG, OSAC, cost-event-consumer)
    - Step 9 (optional): MaaS inference metering (Istio + IPP + llm-katan)
-2. [CRC checklist](dev/crc-deployment-checklist.md) — quick reference
+2. [CRC deployment guide](dev/crc-full-deployment.md)
 3. [Troubleshooting](dev/troubleshooting.md) — common issues (cert SAN, token refresh, migrations)
 
 ## Architecture & Design

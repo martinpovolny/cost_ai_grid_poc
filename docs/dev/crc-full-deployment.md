@@ -1,6 +1,8 @@
-# Full CRC Deployment Guide
+# CRC / OpenShift Deployment Guide
 
-Complete step-by-step guide to deploy the entire stack (OSAC + cost-event-consumer) on CRC.
+Complete step-by-step guide to deploy the entire stack (OSAC + cost-event-consumer)
+on CRC or any OpenShift cluster. Total time: ~45 minutes (faster on re-runs
+since operators persist).
 
 ## Prerequisites
 
@@ -157,8 +159,9 @@ EOF
 # Create namespace
 oc new-project postgres
 
-# Grant SCC
-oc adm policy add-scc-to-user nonroot-v2 -z cnpg-cloudnative-pg -n postgres
+# Grant SCC — CNPG pods run as UID 10001 (postgres), which requires anyuid.
+# nonroot-v2 is insufficient because it only allows the namespace UID range.
+oc adm policy add-scc-to-user anyuid -z cnpg-cloudnative-pg -n postgres
 
 # Install operator
 helm upgrade cnpg oci://ghcr.io/cloudnative-pg/charts/cloudnative-pg \
@@ -957,6 +960,58 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ```bash
 oc set env deployment/cost-event-consumer -n cost-mgmt AUTH_ISSUER_URL-
 ```
+
+## Development Workflow
+
+### Code → Build → Deploy Cycle
+
+```bash
+# 1. Make code changes in inventory-watcher/
+# 2. Rebuild and push image
+cd inventory-watcher
+docker build -t quay.io/martin_povolny/cost-event-consumer:latest -f Containerfile .
+docker push quay.io/martin_povolny/cost-event-consumer:latest
+
+# 3. Force pod restart to pull new image
+kubectl rollout restart deployment/cost-event-consumer -n cost-mgmt
+kubectl rollout status deployment/cost-event-consumer -n cost-mgmt
+
+# 4. Check logs
+kubectl logs -n cost-mgmt deployment/cost-event-consumer -f
+```
+
+### Faster Iteration (version-tagged images)
+
+```bash
+docker build -t quay.io/martin_povolny/cost-event-consumer:dev-$(git rev-parse --short HEAD) -f Containerfile .
+docker push quay.io/martin_povolny/cost-event-consumer:dev-$(git rev-parse --short HEAD)
+kubectl set image deployment/cost-event-consumer \
+  consumer=quay.io/martin_povolny/cost-event-consumer:dev-$(git rev-parse --short HEAD) \
+  -n cost-mgmt
+```
+
+### Test Event Ingestion
+
+```bash
+kubectl port-forward -n cost-mgmt svc/cost-event-consumer 8020:8020 &
+curl -X POST http://localhost:8020/api/v1/events \
+  -H "Content-Type: application/json" \
+  -d '{"specversion":"1.0","type":"inference.tokens.used","source":"test","id":"test-'$(date +%s)'","time":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","data":{"user":"tenant-1","model":"llama-3","prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}'
+curl http://localhost:8020/api/v1/reports/costs?tenant_id=tenant-1 | jq
+```
+
+## What's Different from Production
+
+**Simplified** (removed for resource constraints):
+- No Keycloak — lightweight Python OIDC server instead
+- No Authorino operator — no external auth enforcement
+- No OSAC controller — not needed for API testing
+
+**Kept**:
+- cert-manager + trust-manager (production-grade TLS)
+- CloudNativePG operator (production-grade PostgreSQL)
+- Self-signed CA infrastructure
+- gRPC + REST gateway (real OSAC fulfillment-service image)
 
 ## Verification
 

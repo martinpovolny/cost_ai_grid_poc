@@ -5,7 +5,7 @@ Documentation for running the cost-event-consumer in different environments.
 ## Quick Start
 
 **For CRC (OpenShift Local):**
-1. Start here: [`crc-deployment-checklist.md`](crc-deployment-checklist.md)
+1. Start here: [`crc-full-deployment.md`](crc-full-deployment.md)
 2. Reference: [`crc-full-deployment.md`](crc-full-deployment.md)
 
 **For local development:**
@@ -21,9 +21,7 @@ Documentation for running the cost-event-consumer in different environments.
 
 | File | Purpose | Audience |
 |------|---------|----------|
-| **crc-deployment-checklist.md** | Quick checklist for CRC deployment | **START HERE** for colleagues deploying to CRC |
 | **crc-full-deployment.md** | Complete step-by-step CRC deployment | Reference for detailed steps |
-| **crc-osac-deployment.md** | OSAC-specific details and troubleshooting | When debugging OSAC issues |
 | **local-dev-setup.md** | Local development (Docker + native binaries) | Developers working on the code |
 | **[`.devcontainer/`](../../.devcontainer/)** | GitHub Codespaces config (k3d, k9s, Claude Code) | Zero-install browser-based dev |
 
@@ -164,7 +162,7 @@ kubectl logs -n <namespace> <pod-name>
 
 **OSAC migrations dirty:**
 - Use CloudNativePG (not plain postgres)
-- See `crc-osac-deployment.md`
+- See `crc-full-deployment.md`
 
 **Resource exhausted:**
 ```bash

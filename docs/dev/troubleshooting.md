@@ -46,7 +46,7 @@ for the pattern.
 - Always ensure PostgreSQL is fully ready before deploying gRPC
 - Use readiness probes on the PostgreSQL pod
 - On CRC/OpenShift: CloudNativePG handles migrations correctly and
-  avoids this issue entirely (see `docs/dev/crc-osac-deployment.md`)
+  avoids this issue entirely (see `docs/dev/crc-full-deployment.md`)
 
 **Related:**
 - go-migrate issue: https://github.com/golang-migrate/migrate/issues/283
