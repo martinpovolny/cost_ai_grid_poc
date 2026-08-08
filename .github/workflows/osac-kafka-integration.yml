@@ -73,7 +73,7 @@ jobs:
 
       - name: Clone and build metering-service
         run: |
-          git clone --depth 10 https://github.com/osac-project/osac.git /tmp/osac
+          git clone --depth 200 https://github.com/osac-project/osac.git /tmp/osac
           cd /tmp/osac
           git checkout "$OSAC_METERING_REF"
           cd osac-metering/metering-service
