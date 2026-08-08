@@ -92,13 +92,27 @@ func (p *Producer) route(eventType, resourceID, tenantID string) (topic, key str
 		eventType == "EVENT_TYPE_OBJECT_DELETED":
 		return p.cfg.TopicLifecycle(), resourceID
 
-	// Periodic heartbeat / liveness signals.
+	// OSAC metering-service v1 lifecycle events.
+	case eventType == "osac.resource.created.v1",
+		eventType == "osac.resource.started.v1",
+		eventType == "osac.resource.updated.v1",
+		eventType == "osac.resource.suspended.v1",
+		eventType == "osac.resource.resumed.v1",
+		eventType == "osac.resource.deleted.v1":
+		return p.cfg.TopicLifecycle(), resourceID
+
+	// OSAC v1 heartbeats.
+	case eventType == "osac.resource.heartbeat.v1":
+		return p.cfg.TopicHeartbeat(), resourceID
+
+	// Legacy heartbeat / liveness signals.
 	case strings.HasSuffix(eventType, ".compute_instance.lifecycle"),
 		strings.HasSuffix(eventType, ".cluster.lifecycle"):
 		return p.cfg.TopicHeartbeat(), resourceID
 
-	// Inference model events and token usage.
-	case strings.HasSuffix(eventType, ".model.lifecycle"),
+	// OSAC v1 inference usage + legacy inference events.
+	case eventType == "osac.inference.usage.v1",
+		strings.HasSuffix(eventType, ".model.lifecycle"),
 		eventType == "inference.tokens.used":
 		return p.cfg.TopicInference(), tenantID
 

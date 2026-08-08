@@ -38,7 +38,10 @@ const (
 	eventTypeResourceDeleted   = "osac.resource.deleted.v1"
 	eventTypeResourceStarted   = "osac.resource.started.v1"
 	eventTypeResourceSuspended = "osac.resource.suspended.v1"
+	eventTypeResourceResumed   = "osac.resource.resumed.v1"
 	eventTypeResourceUpdated   = "osac.resource.updated.v1"
+	eventTypeResourceHeartbeat = "osac.resource.heartbeat.v1"
+	eventTypeInferenceUsage    = "osac.inference.usage.v1"
 
 	maxRequestBodySize = 1 << 20 // 1MB
 	maxIDLength        = 256
@@ -128,7 +131,7 @@ func (h *APIHandler) ProcessKafkaEvent(ctx context.Context, topic string, payloa
 		return h.processComputeInstanceEvent(ctx, ce)
 	case ce.Type == eventTypeCluster:
 		return h.processClusterEvent(ctx, ce)
-	case ce.Type == eventTypeModel || ce.Type == eventTypeInferenceTokens:
+	case ce.Type == eventTypeModel || ce.Type == eventTypeInferenceTokens || ce.Type == eventTypeInferenceUsage:
 		return h.processModelEvent(ctx, ce)
 	case isOSACv1EventType(ce.Type):
 		return h.processOSACResourceEvent(ctx, ce)
@@ -227,6 +230,7 @@ type cloudEventInternal struct {
 	OSACResourceType string `json:"osacresourcetype,omitempty"`
 	OSACTenant       string `json:"osactenant,omitempty"`
 	OSACProject      string `json:"osacproject,omitempty"`
+	OSACTrace        string `json:"osactrace,omitempty"`
 }
 
 // meteringData is the payload from the OSAC metering-service v1.
@@ -456,14 +460,15 @@ func isOSACv1EventType(t string) bool {
 	switch t {
 	case eventTypeResourceCreated, eventTypeResourceDeleted,
 		eventTypeResourceStarted, eventTypeResourceSuspended,
-		eventTypeResourceUpdated:
+		eventTypeResourceResumed, eventTypeResourceUpdated,
+		eventTypeResourceHeartbeat:
 		return true
 	}
 	return false
 }
 
 func classifyEvent(ce cloudEventInternal) (resourceType, resourceID, tenantID string) {
-	if isOSACv1EventType(ce.Type) {
+	if isOSACv1EventType(ce.Type) || ce.Type == eventTypeInferenceUsage {
 		rt := ce.OSACResourceType
 		if rt == "" {
 			rt = ce.Type
@@ -716,9 +721,15 @@ func (h *APIHandler) processOSACComputeInstance(ctx context.Context, ce cloudEve
 		instanceType = *bd.InstanceType
 	}
 
+	project := ""
+	if md.ProjectID != nil {
+		project = *md.ProjectID
+	}
+
 	if err := h.store.UpsertComputeInstance(ctx, inventory.ComputeInstanceRecord{
 		InstanceID:   md.ResourceID,
 		Tenant:       md.TenantID,
+		Project:      project,
 		State:        state,
 		InstanceType: instanceType,
 		CreatedAt:    ce.Time,

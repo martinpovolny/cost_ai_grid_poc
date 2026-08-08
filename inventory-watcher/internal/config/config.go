@@ -130,7 +130,7 @@ func Load() *Config {
 		SplunkInterval:     durationOrDefault("SPLUNK_INTERVAL", 10*time.Second),
 		SplunkTLSInsecure:  os.Getenv("SPLUNK_TLS_INSECURE") == "true",
 		KafkaBrokers:       os.Getenv("KAFKA_BROKERS"),
-		KafkaConsumerGroup: envOrDefault("KAFKA_CONSUMER_GROUP", "cost-consumer"),
+		KafkaConsumerGroup: envOrDefault("KAFKA_CONSUMER_GROUP", "osac-metering-cost-management"),
 		KafkaTopicPrefix:   envOrDefault("KAFKA_TOPIC_PREFIX", "osac.metering"),
 		KafkaMode:          envOrDefault("KAFKA_MODE", "both"),
 	}
