@@ -150,6 +150,7 @@ spec:
         values:
         - osac
         - postgres
+        - cost-mgmt
 EOF
 ```
 
@@ -159,9 +160,12 @@ EOF
 # Create namespace
 oc new-project postgres
 
-# Grant SCC — CNPG pods run as UID 10001 (postgres), which requires anyuid.
-# nonroot-v2 is insufficient because it only allows the namespace UID range.
+# Grant SCC — CNPG pods run as UID 10001 (postgres).
+# Use anyuid on CRC; use privileged on managed OpenShift clusters
+# (some reject CNPG's seccomp annotations with anyuid).
 oc adm policy add-scc-to-user anyuid -z cnpg-cloudnative-pg -n postgres
+# If pods still fail with "seccomp may not be set", escalate:
+# oc adm policy add-scc-to-user privileged -z cnpg-cloudnative-pg -n postgres
 
 # Install operator
 helm upgrade cnpg oci://ghcr.io/cloudnative-pg/charts/cloudnative-pg \
@@ -564,6 +568,10 @@ spec:
           env:
             - name: OSAC_BASE_URL
               value: "http://osac-rest.osac.svc:8000"
+            - name: OSAC_GRPC_ADDRESS
+              value: "osac-grpc.osac.svc:8010"
+            - name: OSAC_CA_CERT
+              value: "/ca-bundle/bundle.pem"
             - name: OSAC_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -580,6 +588,8 @@ spec:
               value: "json"
             - name: LOG_LEVEL
               value: "info"
+            - name: GRPC_ENFORCE_ALPN_ENABLED
+              value: "false"
           livenessProbe:
             httpGet:
               path: /healthz
@@ -592,6 +602,9 @@ spec:
               port: http
             initialDelaySeconds: 10
             periodSeconds: 5
+          volumeMounts:
+            - name: ca-bundle
+              mountPath: /ca-bundle
           resources:
             requests:
               memory: "64Mi"
@@ -599,6 +612,10 @@ spec:
             limits:
               memory: "256Mi"
               cpu: "500m"
+      volumes:
+        - name: ca-bundle
+          configMap:
+            name: ca-bundle
 ---
 apiVersion: v1
 kind: Service
