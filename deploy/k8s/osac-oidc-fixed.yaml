@@ -28,7 +28,8 @@ data:
     from cryptography.hazmat.primitives import serialization
 
     # In Kubernetes, certs are mounted to /certs
-    ISSUER = os.environ.get("ISSUER", "https://osac-oidc.osac.svc:8013")
+    _ns = os.environ.get("POD_NAMESPACE", "osac")
+    ISSUER = os.environ.get("ISSUER", f"https://osac-oidc.{_ns}.svc:8013")
     PORT = int(os.environ.get("PORT", "8013"))
     CERT_DIR = os.environ.get("CERT_DIR", "/certs")
 
@@ -134,8 +135,10 @@ spec:
             # HOME=/tmp: pod runs non-root; pip needs a writable home dir.
             - HOME=/tmp pip install --no-cache-dir "cryptography==42.0.8" && python3 /scripts/oidc_server.py
           env:
-            - name: ISSUER
-              value: https://osac-oidc.osac.svc:8013
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: CERT_DIR
               value: /certs
             - name: PYTHONUNBUFFERED
