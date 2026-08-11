@@ -4,7 +4,7 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN GOTOOLCHAIN=auto go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOTOOLCHAIN=auto go build -o cost-event-consumer ./cmd/consumer/
+RUN GOTOOLCHAIN=auto go build -o cost-event-consumer ./cmd/consumer/
 RUN CGO_ENABLED=0 GOTOOLCHAIN=auto go build -o maas-simulator ./cmd/maas-simulator/
 RUN CGO_ENABLED=0 GOTOOLCHAIN=auto go build -o osac-simulator ./cmd/osac-simulator/
 RUN CGO_ENABLED=0 GOTOOLCHAIN=auto go build -o event-replayer ./cmd/event-replayer/

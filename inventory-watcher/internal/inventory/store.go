@@ -44,6 +44,20 @@ func (s *Store) DefaultProjectForTenant(ctx context.Context, tenantID string) st
 	return projectID
 }
 
+func (s *Store) TenantTier(ctx context.Context, tenantID string) string {
+	if tenantID == "" {
+		return "standard"
+	}
+	var tier string
+	err := s.pool.QueryRow(ctx,
+		"SELECT COALESCE(labels->>'cost-mgmt/tier', labels->>'tier', '') FROM inventory_tenant WHERE tenant_id = $1",
+		tenantID).Scan(&tier)
+	if err != nil || tier == "" {
+		return "standard"
+	}
+	return tier
+}
+
 // RunMigrations creates the inventory tables if they don't exist.
 func (s *Store) RunMigrations(ctx context.Context) error {
 	if _, err := s.pool.Exec(ctx, schema); err != nil {
@@ -362,36 +376,14 @@ CREATE TABLE IF NOT EXISTS splunk_cursor (
 INSERT INTO splunk_cursor (id, last_sent_id) VALUES (1, 0) ON CONFLICT DO NOTHING;
 
 -- Performance fixes for scale (identified via load testing at 50 events/s).
--- All use CREATE INDEX IF NOT EXISTS / DROP INDEX IF EXISTS — safe on existing DBs.
-
--- Fix 1: idx_me_unrated — add period_start so MIN(period_start) WHERE rated_at IS NULL
--- is an index-only scan (pipeline lag metric). Old index only had (id).
 DROP INDEX IF EXISTS idx_me_unrated;
 CREATE INDEX IF NOT EXISTS idx_me_unrated ON metering_entries (period_start, id) WHERE rated_at IS NULL;
-
--- Fix 2: cross-tenant cost report — period_start was not a leading column so
--- GET /api/v1/reports/costs without a tenant filter did a full table scan.
 CREATE INDEX IF NOT EXISTS idx_ce_period_tenant ON cost_entries (period_start, period_end, tenant_id);
-
--- Fix 3: budget quota SUM — meter_name missing from cost_entries tenant index so
--- CostSum() scanned all tenant entries and filtered meter_name in the heap.
 CREATE INDEX IF NOT EXISTS idx_ce_tenant_meter_period ON cost_entries (tenant_id, meter_name, period_start, period_end);
-
--- Fix 4: wallet deduction sweep — no partial index on unapplied entries so
--- UnappliedCostEntries() read all tenant cost entries per sweep cycle.
 CREATE INDEX IF NOT EXISTS idx_ce_unapplied ON cost_entries (tenant_id, period_start) WHERE wallet_applied < cost_amount;
-
--- Missing project+meter composite on metering_entries — MeteringSumByProject
--- scanned all tenant+meter entries and filtered project_id in the heap.
 CREATE INDEX IF NOT EXISTS idx_me_tenant_project_meter
   ON metering_entries (tenant_id, project_id, meter_name, period_start, period_end);
 
--- Autovacuum tuning for high-churn tables.
--- Default threshold (20% dead tuples) is too conservative for tables that
--- receive mass UPDATEs (metering_entries: rated_at set on every rating sweep)
--- or bulk DELETEs (raw_events: pruned after archival). At 9M rows and 300
--- updates/sec the default fires every ~100 minutes; 1% fires every ~5 minutes,
--- keeping index bloat controlled and planner statistics fresh.
 ALTER TABLE metering_entries SET (
   autovacuum_vacuum_scale_factor  = 0.01,
   autovacuum_analyze_scale_factor = 0.005
@@ -399,6 +391,15 @@ ALTER TABLE metering_entries SET (
 ALTER TABLE raw_events SET (
   autovacuum_vacuum_scale_factor  = 0.01,
   autovacuum_analyze_scale_factor = 0.005
+);
+
+CREATE TABLE IF NOT EXISTS pricing_rules (
+    id         BIGSERIAL PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    rule_json  JSONB NOT NULL,
+    version    INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 `
 
@@ -2056,20 +2057,12 @@ func (s *Store) RawEventsSince(ctx context.Context, afterID int64, limit int) ([
 
 // SizingStats holds DB telemetry for Prometheus gauges.
 type SizingStats struct {
-	// TableRows maps table name → approximate live row count.
-	TableRows map[string]int64
-	// TableBytes maps table name → on-disk size in bytes (excludes indexes).
-	TableBytes map[string]int64
-	// UnratedEntries is the count of metering entries with rated_at IS NULL.
-	UnratedEntries int64
-	// PipelineLagSeconds is the age of the oldest unrated metering entry in seconds.
-	// Zero if there are no unrated entries.
+	TableRows          map[string]int64
+	TableBytes         map[string]int64
+	UnratedEntries     int64
 	PipelineLagSeconds float64
 }
 
-// GetSizingStats returns DB table sizing info and pipeline queue depth.
-// It runs three queries: pg_stat_user_tables for live rows + size, unrated
-// count, and oldest unrated age. Errors are logged and return zero values.
 func (s *Store) GetSizingStats(ctx context.Context) SizingStats {
 	stats := SizingStats{
 		TableRows:  make(map[string]int64),
@@ -2078,7 +2071,6 @@ func (s *Store) GetSizingStats(ctx context.Context) SizingStats {
 
 	const tables = `'raw_events','metering_entries','cost_entries','wallet_ledger_entries'`
 
-	// Table row counts and sizes from pg_stat_user_tables.
 	rows, err := s.pool.Query(ctx, `
 		SELECT relname, n_live_tup, pg_relation_size(relid)
 		FROM pg_stat_user_tables
@@ -2095,14 +2087,12 @@ func (s *Store) GetSizingStats(ctx context.Context) SizingStats {
 		}
 	}
 
-	// Unrated queue depth.
 	if err := s.pool.QueryRow(ctx,
 		`SELECT count(*) FROM metering_entries WHERE rated_at IS NULL`,
 	).Scan(&stats.UnratedEntries); err != nil {
 		stats.UnratedEntries = 0
 	}
 
-	// Pipeline lag: age of oldest unrated entry.
 	var lagSecs *float64
 	if err := s.pool.QueryRow(ctx, `
 		SELECT EXTRACT(EPOCH FROM (NOW() - MIN(period_start)))
@@ -2112,4 +2102,55 @@ func (s *Store) GetSizingStats(ctx context.Context) SizingStats {
 	}
 
 	return stats
+}
+
+func (s *Store) UpsertPricingRule(ctx context.Context, name string, ruleJSON json.RawMessage) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO pricing_rules (name, rule_json)
+		VALUES ($1, $2)
+		ON CONFLICT (name) DO UPDATE SET
+			rule_json = EXCLUDED.rule_json,
+			version = pricing_rules.version + 1,
+			updated_at = NOW()
+	`, name, ruleJSON)
+	return err
+}
+
+func (s *Store) GetPricingRule(ctx context.Context, name string) (*PricingRule, error) {
+	var r PricingRule
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, name, rule_json, version, created_at, updated_at
+		FROM pricing_rules WHERE name = $1
+	`, name).Scan(&r.ID, &r.Name, &r.RuleJSON, &r.Version, &r.CreatedAt, &r.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+func (s *Store) AllPricingRules(ctx context.Context) ([]PricingRule, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, name, rule_json, version, created_at, updated_at
+		FROM pricing_rules ORDER BY name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rules []PricingRule
+	for rows.Next() {
+		var r PricingRule
+		if err := rows.Scan(&r.ID, &r.Name, &r.RuleJSON, &r.Version, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			return nil, err
+		}
+		rules = append(rules, r)
+	}
+	return rules, rows.Err()
+}
+
+func (s *Store) PricingRulesVersion(ctx context.Context) (int64, error) {
+	var v int64
+	err := s.pool.QueryRow(ctx, `SELECT COALESCE(SUM(version), 0) FROM pricing_rules`).Scan(&v)
+	return v, err
 }
