@@ -29,6 +29,16 @@ func New(store *inventory.Store, interval time.Duration, logger *slog.Logger) *M
 	return &Meter{store: store, interval: interval, logger: logger}
 }
 
+// WithStore returns a Meter that shares configuration and logging with m but
+// directs event-driven writes through store. Batch ingestion uses it with a
+// transaction-bound Store so MaaS entries commit with the receipt and raw
+// event rather than becoming an independent side effect.
+func (m *Meter) WithStore(store *inventory.Store) *Meter {
+	clone := *m
+	clone.store = store
+	return &clone
+}
+
 func (m *Meter) Run(ctx context.Context) error {
 	ticker := time.NewTicker(m.interval)
 	defer ticker.Stop()
@@ -359,26 +369,26 @@ func (m *Meter) MeterBareMetalInstanceFinal(ctx context.Context, instanceID stri
 
 // MaaS metering data passed from event ingestion.
 type MaaSUsage struct {
-	ModelID             string
-	ModelName           string
-	TenantID            string
-	UserID              string
-	State               string
-	TokensIn            int64
-	TokensOut           int64
-	CachedInputTokens   int64
-	ReasoningTokens     int64
-	Requests            int64
-	EventTime           time.Time
-	DurationSeconds     float64
+	ModelID           string
+	ModelName         string
+	TenantID          string
+	UserID            string
+	State             string
+	TokensIn          int64
+	TokensOut         int64
+	CachedInputTokens int64
+	ReasoningTokens   int64
+	Requests          int64
+	EventTime         time.Time
+	DurationSeconds   float64
 }
 
 // MeterMaaSEvent produces metering entries from a MaaS usage event.
 // Unlike VM metering (sweep-based), MaaS metering is event-driven:
 // each event carries the consumption values directly.
-func (m *Meter) MeterMaaSEvent(ctx context.Context, usage MaaSUsage) {
+func (m *Meter) MeterMaaSEvent(ctx context.Context, usage MaaSUsage) error {
 	if !IsModelBillable(usage.State) {
-		return
+		return nil
 	}
 
 	periodStart := usage.EventTime.Add(-time.Duration(usage.DurationSeconds) * time.Second)
@@ -389,6 +399,7 @@ func (m *Meter) MeterMaaSEvent(ctx context.Context, usage MaaSUsage) {
 	if err := m.store.InsertMeteringEntryBatch(ctx, entries); err != nil {
 		m.logger.Error("failed to insert MaaS metering entries",
 			"model", usage.ModelID, "error", err)
+		return err
 	} else {
 		for _, entry := range entries {
 			metrics.MeteringEntriesCreated.WithLabelValues(entry.ResourceType, entry.MeterName).Inc()
@@ -397,6 +408,7 @@ func (m *Meter) MeterMaaSEvent(ctx context.Context, usage MaaSUsage) {
 
 	m.logger.Debug("metered MaaS event", "model", usage.ModelID,
 		"tokens_in", usage.TokensIn, "tokens_out", usage.TokensOut, "requests", usage.Requests)
+	return nil
 }
 
 func maasMeters(usage MaaSUsage, projectID string, periodStart, periodEnd time.Time) []inventory.MeteringEntry {

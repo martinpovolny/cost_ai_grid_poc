@@ -3,27 +3,60 @@ package inventory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 )
 
 type Store struct {
-	pool           *pgxpool.Pool
-	logger         *slog.Logger
-	projectCache   sync.Map
+	pool         *pgxpool.Pool
+	db           dbtx
+	logger       *slog.Logger
+	projectCache *sync.Map
+}
+
+// dbtx is implemented by both pgxpool.Pool and pgx.Tx. Store methods use it
+// so a request can run raw-event, inventory, and metering writes atomically.
+type dbtx interface {
+	Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...interface{}) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...interface{}) pgx.Row
 }
 
 func NewStore(pool *pgxpool.Pool, logger *slog.Logger) *Store {
-	return &Store{pool: pool, logger: logger}
+	return &Store{pool: pool, db: pool, logger: logger, projectCache: &sync.Map{}}
 }
 
 func (s *Store) Pool() *pgxpool.Pool {
 	return s.pool
+}
+
+// InTransaction runs fn against a transaction-bound Store. fn must return an
+// error for any processing failure so the receipt claim and every side effect
+// roll back together.
+func (s *Store) InTransaction(ctx context.Context, fn func(*Store) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	txStore := *s
+	txStore.db = tx
+	if err := fn(&txStore); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) DefaultProjectForTenant(ctx context.Context, tenantID string) string {
@@ -34,7 +67,7 @@ func (s *Store) DefaultProjectForTenant(ctx context.Context, tenantID string) st
 		return cached.(string)
 	}
 	var projectID string
-	err := s.pool.QueryRow(ctx,
+	err := s.db.QueryRow(ctx,
 		"SELECT project_id FROM inventory_project WHERE tenant = $1 LIMIT 1",
 		tenantID).Scan(&projectID)
 	if err != nil || projectID == "" {
@@ -49,7 +82,7 @@ func (s *Store) TenantTier(ctx context.Context, tenantID string) string {
 		return "standard"
 	}
 	var tier string
-	err := s.pool.QueryRow(ctx,
+	err := s.db.QueryRow(ctx,
 		"SELECT COALESCE(labels->>'cost-mgmt/tier', labels->>'tier', '') FROM inventory_tenant WHERE tenant_id = $1",
 		tenantID).Scan(&tier)
 	if err != nil || tier == "" {
@@ -60,10 +93,10 @@ func (s *Store) TenantTier(ctx context.Context, tenantID string) string {
 
 // RunMigrations creates the inventory tables if they don't exist.
 func (s *Store) RunMigrations(ctx context.Context) error {
-	if _, err := s.pool.Exec(ctx, schema); err != nil {
+	if _, err := s.db.Exec(ctx, schema); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx, schemaEvolutions)
+	_, err := s.db.Exec(ctx, schemaEvolutions)
 	return err
 }
 
@@ -401,7 +434,52 @@ CREATE TABLE IF NOT EXISTS pricing_rules (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Receipt identity is deliberately separate from raw_events. raw_events stays
+-- append-only and non-unique for audit throughput; receipt identity protects
+-- the billing pipeline from adapter retries and concurrent redelivery.
+CREATE TABLE IF NOT EXISTS ingestion_receipts (
+    event_source  TEXT NOT NULL,
+    event_id      TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    received_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (event_source, event_id)
+);
 `
+
+// ErrReceiptCollision means a producer reused an event identity for different
+// content. Retrying cannot fix it; the caller must return HTTP 409.
+var ErrReceiptCollision = errors.New("ingestion receipt identity collision")
+
+// ClaimIngestionReceipt claims a source/id pair for one canonical CloudEvent.
+// It must run in the same transaction as the event side effects. A true return
+// value means the caller owns a newly inserted receipt; false means a verified
+// exact replay and the caller must not process the event again.
+func (s *Store) ClaimIngestionReceipt(ctx context.Context, source, id, digest string) (bool, error) {
+	tag, err := s.db.Exec(ctx, `
+		INSERT INTO ingestion_receipts (event_source, event_id, payload_sha256)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (event_source, event_id) DO NOTHING
+	`, source, id, digest)
+	if err != nil {
+		return false, fmt.Errorf("claim receipt %s/%s: %w", source, id, err)
+	}
+	if tag.RowsAffected() == 1 {
+		return true, nil
+	}
+
+	var existingDigest string
+	if err := s.db.QueryRow(ctx, `
+		SELECT payload_sha256 FROM ingestion_receipts
+		WHERE event_source = $1 AND event_id = $2
+	`, source, id).Scan(&existingDigest); err != nil {
+		return false, fmt.Errorf("read existing receipt %s/%s: %w", source, id, err)
+	}
+	if existingDigest != digest {
+		return false, fmt.Errorf("%w: %s/%s", ErrReceiptCollision, source, id)
+	}
+	return false, nil
+}
 
 // InsertRawEvent appends an event to the immutable audit log.
 // By default raw_events has no unique constraint — dedup that matters
@@ -409,7 +487,7 @@ CREATE TABLE IF NOT EXISTS pricing_rules (
 // event-level dedup at the cost of ~33% ingest throughput, create a
 // unique index: CREATE UNIQUE INDEX ON raw_events (event_id).
 func (s *Store) InsertRawEvent(ctx context.Context, ev RawEvent) (bool, error) {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		INSERT INTO raw_events
 			(event_id, event_type, event_source, event_time, tenant_id, resource_type, resource_id, data, received_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
@@ -426,7 +504,7 @@ func (s *Store) InsertRawEvent(ctx context.Context, ev RawEvent) (bool, error) {
 
 // InsertMeteringEntry stores a single metering record.
 func (s *Store) InsertMeteringEntry(ctx context.Context, entry MeteringEntry) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		INSERT INTO metering_entries
 			(raw_event_id, resource_type, resource_id, tenant_id, project_id, user_id, instance_type, meter_name, value, unit, period_start, period_end)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -459,7 +537,7 @@ func (s *Store) InsertMeteringEntryBatch(ctx context.Context, entries []Metering
 		args = append(args, e.RawEventID, e.ResourceType, e.ResourceID,
 			e.TenantID, e.ProjectID, e.UserID, e.InstanceType, e.MeterName, e.Value, e.Unit, e.PeriodStart, e.PeriodEnd)
 	}
-	_, err := s.pool.Exec(ctx, query, args...)
+	_, err := s.db.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("batch insert %d metering entries: %w", len(entries), err)
 	}
@@ -468,7 +546,7 @@ func (s *Store) InsertMeteringEntryBatch(ctx context.Context, entries []Metering
 
 // BillableComputeInstances returns alive compute instances in billable states.
 func (s *Store) BillableComputeInstances(ctx context.Context) ([]ComputeInstanceRecord, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT instance_id, name, tenant, project, cluster_id, instance_type, cores, memory_gib, state, labels,
 		       created_at, deleted_at, last_event_id, last_updated, last_metered_at
 		FROM inventory_compute_instance
@@ -494,7 +572,7 @@ func (s *Store) BillableComputeInstances(ctx context.Context) ([]ComputeInstance
 
 // UpdateComputeInstanceLastMetered sets last_metered_at for a compute instance.
 func (s *Store) UpdateComputeInstanceLastMetered(ctx context.Context, instanceID string, t time.Time) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		UPDATE inventory_compute_instance SET last_metered_at = $2 WHERE instance_id = $1
 	`, instanceID, t)
 	return err
@@ -503,7 +581,7 @@ func (s *Store) UpdateComputeInstanceLastMetered(ctx context.Context, instanceID
 // GetComputeInstance returns a single compute instance by ID.
 func (s *Store) GetComputeInstance(ctx context.Context, instanceID string) (*ComputeInstanceRecord, error) {
 	var r ComputeInstanceRecord
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT instance_id, name, tenant, project, cluster_id, instance_type, cores, memory_gib, state, labels,
 		       created_at, deleted_at, last_event_id, last_updated, last_metered_at
 		FROM inventory_compute_instance WHERE instance_id = $1
@@ -518,7 +596,7 @@ func (s *Store) GetComputeInstance(ctx context.Context, instanceID string) (*Com
 
 // BillableClusters returns alive clusters in billable states.
 func (s *Store) BillableClusters(ctx context.Context) ([]ClusterRecord, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT cluster_id, name, tenant, template, node_sets, state, labels,
 		       created_at, deleted_at, last_event_id, last_updated, last_metered_at
 		FROM inventory_cluster
@@ -548,7 +626,7 @@ func (s *Store) UpsertModel(ctx context.Context, rec ModelRecord) error {
 		return err
 	}
 
-	_, err = s.pool.Exec(ctx, `
+	_, err = s.db.Exec(ctx, `
 		INSERT INTO inventory_model
 			(model_id, name, model_name, tenant, project, template, state, labels, created_at, deleted_at, last_event_id, last_updated)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
@@ -576,7 +654,7 @@ func (s *Store) UpsertModel(ctx context.Context, rec ModelRecord) error {
 
 // MarkModelDeleted sets the deleted_at timestamp on a model.
 func (s *Store) MarkModelDeleted(ctx context.Context, modelID string, deletedAt time.Time, eventID string) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		UPDATE inventory_model
 		SET deleted_at = $2, last_event_id = $3, last_updated = NOW()
 		WHERE model_id = $1 AND deleted_at IS NULL
@@ -592,7 +670,7 @@ func (s *Store) MarkModelDeleted(ctx context.Context, modelID string, deletedAt 
 
 // UpdateClusterLastMetered sets last_metered_at for a cluster.
 func (s *Store) UpdateClusterLastMetered(ctx context.Context, clusterID string, t time.Time) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		UPDATE inventory_cluster SET last_metered_at = $2 WHERE cluster_id = $1
 	`, clusterID, t)
 	return err
@@ -605,7 +683,7 @@ func (s *Store) UpsertBareMetalInstance(ctx context.Context, rec BareMetalInstan
 		return err
 	}
 
-	_, err = s.pool.Exec(ctx, `
+	_, err = s.db.Exec(ctx, `
 		INSERT INTO inventory_bare_metal_instance
 			(instance_id, name, tenant, catalog_item, state, labels, created_at, deleted_at, last_event_id, last_updated)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
@@ -630,7 +708,7 @@ func (s *Store) UpsertBareMetalInstance(ctx context.Context, rec BareMetalInstan
 
 // MarkBareMetalInstanceDeleted sets the deleted_at timestamp.
 func (s *Store) MarkBareMetalInstanceDeleted(ctx context.Context, instanceID string, deletedAt time.Time, eventID string) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		UPDATE inventory_bare_metal_instance
 		SET deleted_at = $2, last_event_id = $3, last_updated = NOW()
 		WHERE instance_id = $1 AND deleted_at IS NULL
@@ -640,7 +718,7 @@ func (s *Store) MarkBareMetalInstanceDeleted(ctx context.Context, instanceID str
 
 // BillableBareMetalInstances returns alive bare metal instances in billable states.
 func (s *Store) BillableBareMetalInstances(ctx context.Context) ([]BareMetalInstanceRecord, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT instance_id, name, tenant, catalog_item, state, labels,
 		       created_at, deleted_at, last_event_id, last_updated, last_metered_at
 		FROM inventory_bare_metal_instance
@@ -665,7 +743,7 @@ func (s *Store) BillableBareMetalInstances(ctx context.Context) ([]BareMetalInst
 
 // ListAliveBareMetalInstances returns all bare metal instances not deleted.
 func (s *Store) ListAliveBareMetalInstances(ctx context.Context) ([]BareMetalInstanceRecord, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT instance_id, name, tenant, catalog_item, state, labels,
 		       created_at, deleted_at, last_event_id, last_updated, last_metered_at
 		FROM inventory_bare_metal_instance WHERE deleted_at IS NULL
@@ -689,7 +767,7 @@ func (s *Store) ListAliveBareMetalInstances(ctx context.Context) ([]BareMetalIns
 
 // UpdateBareMetalInstanceLastMetered sets last_metered_at.
 func (s *Store) UpdateBareMetalInstanceLastMetered(ctx context.Context, instanceID string, t time.Time) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		UPDATE inventory_bare_metal_instance SET last_metered_at = $2 WHERE instance_id = $1
 	`, instanceID, t)
 	return err
@@ -698,7 +776,7 @@ func (s *Store) UpdateBareMetalInstanceLastMetered(ctx context.Context, instance
 // GetBareMetalInstance returns a single bare metal instance by ID.
 func (s *Store) GetBareMetalInstance(ctx context.Context, instanceID string) (*BareMetalInstanceRecord, error) {
 	var r BareMetalInstanceRecord
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT instance_id, name, tenant, catalog_item, state, labels,
 		       created_at, deleted_at, last_event_id, last_updated, last_metered_at
 		FROM inventory_bare_metal_instance WHERE instance_id = $1
@@ -717,7 +795,7 @@ func (s *Store) UpsertProject(ctx context.Context, rec ProjectRecord) error {
 		return err
 	}
 
-	_, err = s.pool.Exec(ctx, `
+	_, err = s.db.Exec(ctx, `
 		INSERT INTO inventory_project
 			(project_id, name, tenant, labels, created_at, deleted_at, last_updated)
 		VALUES ($1, $2, $3, $4, $5, $6, NOW())
@@ -740,7 +818,7 @@ func (s *Store) UpsertProject(ctx context.Context, rec ProjectRecord) error {
 
 // ListAliveProjects returns all projects not yet deleted.
 func (s *Store) ListAliveProjects(ctx context.Context) ([]ProjectRecord, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT project_id, name, tenant, labels, created_at, deleted_at, last_updated
 		FROM inventory_project WHERE deleted_at IS NULL
 	`)
@@ -768,7 +846,7 @@ func (s *Store) UpsertTenant(ctx context.Context, rec TenantRecord) error {
 		return err
 	}
 
-	_, err = s.pool.Exec(ctx, `
+	_, err = s.db.Exec(ctx, `
 		INSERT INTO inventory_tenant
 			(tenant_id, name, labels, created_at, deleted_at, last_updated)
 		VALUES ($1, $2, $3, $4, $5, NOW())
@@ -789,7 +867,7 @@ func (s *Store) UpsertTenant(ctx context.Context, rec TenantRecord) error {
 
 // ListAliveTenants returns all tenants not yet deleted.
 func (s *Store) ListAliveTenants(ctx context.Context) ([]TenantRecord, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT tenant_id, name, labels, created_at, deleted_at, last_updated
 		FROM inventory_tenant WHERE deleted_at IS NULL
 	`)
@@ -817,7 +895,7 @@ func (s *Store) UpsertComputeInstance(ctx context.Context, rec ComputeInstanceRe
 		return err
 	}
 
-	_, err = s.pool.Exec(ctx, `
+	_, err = s.db.Exec(ctx, `
 		INSERT INTO inventory_compute_instance
 			(instance_id, name, tenant, project, cluster_id, instance_type, cores, memory_gib, state, labels, created_at, deleted_at, last_event_id, last_updated)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
@@ -848,7 +926,7 @@ func (s *Store) UpsertComputeInstance(ctx context.Context, rec ComputeInstanceRe
 
 // MarkComputeInstanceDeleted sets the deleted_at timestamp on a compute instance.
 func (s *Store) MarkComputeInstanceDeleted(ctx context.Context, instanceID string, deletedAt time.Time, eventID string) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		UPDATE inventory_compute_instance
 		SET deleted_at = $2, last_event_id = $3, last_updated = NOW()
 		WHERE instance_id = $1 AND deleted_at IS NULL
@@ -874,7 +952,7 @@ func (s *Store) UpsertCluster(ctx context.Context, rec ClusterRecord) error {
 		nodeSetsJSON = json.RawMessage(`{}`)
 	}
 
-	_, err = s.pool.Exec(ctx, `
+	_, err = s.db.Exec(ctx, `
 		INSERT INTO inventory_cluster
 			(cluster_id, name, tenant, template, node_sets, state, labels, created_at, deleted_at, last_event_id, last_updated)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
@@ -901,7 +979,7 @@ func (s *Store) UpsertCluster(ctx context.Context, rec ClusterRecord) error {
 
 // MarkClusterDeleted sets the deleted_at timestamp on a cluster.
 func (s *Store) MarkClusterDeleted(ctx context.Context, clusterID string, deletedAt time.Time, eventID string) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		UPDATE inventory_cluster
 		SET deleted_at = $2, last_event_id = $3, last_updated = NOW()
 		WHERE cluster_id = $1 AND deleted_at IS NULL
@@ -917,7 +995,7 @@ func (s *Store) MarkClusterDeleted(ctx context.Context, clusterID string, delete
 
 // UpsertInstanceType inserts or updates an instance type (for cost lookups).
 func (s *Store) UpsertInstanceType(ctx context.Context, rec InstanceTypeRecord) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		INSERT INTO inventory_instance_type
 			(instance_type_id, name, cores, memory_gib, state, last_updated)
 		VALUES ($1, $2, $3, $4, $5, NOW())
@@ -938,7 +1016,7 @@ func (s *Store) UpsertInstanceType(ctx context.Context, rec InstanceTypeRecord) 
 // GetInstanceType returns the specs for an instance type.
 func (s *Store) GetInstanceType(ctx context.Context, id string) (*InstanceTypeRecord, error) {
 	var rec InstanceTypeRecord
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT instance_type_id, name, cores, memory_gib, state, last_updated
 		FROM inventory_instance_type WHERE instance_type_id = $1
 	`, id).Scan(&rec.InstanceTypeID, &rec.Name, &rec.Cores, &rec.MemoryGiB, &rec.State, &rec.LastUpdated)
@@ -951,7 +1029,7 @@ func (s *Store) GetInstanceType(ctx context.Context, id string) (*InstanceTypeRe
 
 // ListAllInstanceTypes returns all instance types for batch lookups.
 func (s *Store) ListAllInstanceTypes(ctx context.Context) ([]InstanceTypeRecord, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT instance_type_id, name, cores, memory_gib, state, last_updated
 		FROM inventory_instance_type
 	`)
@@ -973,7 +1051,7 @@ func (s *Store) ListAllInstanceTypes(ctx context.Context) ([]InstanceTypeRecord,
 
 // UpsertCatalogItem inserts or updates a catalog item (SKU definition).
 func (s *Store) UpsertCatalogItem(ctx context.Context, rec CatalogItemRecord) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		INSERT INTO inventory_catalog_item
 			(catalog_item_id, item_type, name, title, description, template, published, tenant, last_updated)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
@@ -997,7 +1075,7 @@ func (s *Store) UpsertCatalogItem(ctx context.Context, rec CatalogItemRecord) er
 
 // ListAliveComputeInstances returns all compute instances not yet deleted.
 func (s *Store) ListAliveComputeInstances(ctx context.Context) ([]ComputeInstanceRecord, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT instance_id, name, tenant, project, cluster_id, instance_type, cores, memory_gib, state, labels,
 		       created_at, deleted_at, last_event_id, last_updated, last_metered_at
 		FROM inventory_compute_instance WHERE deleted_at IS NULL
@@ -1022,7 +1100,7 @@ func (s *Store) ListAliveComputeInstances(ctx context.Context) ([]ComputeInstanc
 
 // ListAliveClusters returns all clusters not yet deleted.
 func (s *Store) ListAliveClusters(ctx context.Context) ([]ClusterRecord, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT cluster_id, name, tenant, template, node_sets, state, labels,
 		       created_at, deleted_at, last_event_id, last_updated, last_metered_at
 		FROM inventory_cluster WHERE deleted_at IS NULL
@@ -1056,7 +1134,7 @@ func (s *Store) UpsertRate(ctx context.Context, rec RateRecord) (int64, error) {
 	}
 
 	var id int64
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		INSERT INTO rates
 			(tenant_id, resource_type, instance_type, meter_name, koku_metric, cost_type, price_per_unit, currency, tiers, tier_mode, tier_period, description, effective_from, effective_to)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
@@ -1080,7 +1158,7 @@ func (s *Store) FindRate(ctx context.Context, tenantID, resourceType, instanceTy
 	var rec RateRecord
 	var tiersJSON []byte
 
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT id, tenant_id, resource_type, instance_type, meter_name, koku_metric, cost_type,
 		       price_per_unit, currency, tiers, tier_mode, tier_period, description, effective_from, effective_to
 		FROM rates
@@ -1114,7 +1192,7 @@ func (s *Store) FindRate(ctx context.Context, tenantID, resourceType, instanceTy
 // UnratedMeteringEntries returns metering entries not yet rated.
 // Uses a partial index on (id) WHERE rated_at IS NULL — O(unrated), not O(total).
 func (s *Store) UnratedMeteringEntries(ctx context.Context, limit int) ([]MeteringEntry, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT id, raw_event_id, resource_type, resource_id, tenant_id,
 		       project_id, user_id, instance_type, meter_name, value, unit, period_start, period_end
 		FROM metering_entries
@@ -1145,13 +1223,13 @@ func (s *Store) MarkMeteringEntriesRated(ctx context.Context, ids []int64) error
 		return nil
 	}
 	query := "UPDATE metering_entries SET rated_at = NOW() WHERE id = ANY($1)"
-	_, err := s.pool.Exec(ctx, query, ids)
+	_, err := s.db.Exec(ctx, query, ids)
 	return err
 }
 
 // AllActiveRates returns all rates currently in effect.
 func (s *Store) AllActiveRates(ctx context.Context, at time.Time) ([]RateRecord, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT id, tenant_id, resource_type, instance_type, meter_name, koku_metric, cost_type,
 		       price_per_unit, currency, tiers, tier_mode, tier_period, description, effective_from, effective_to
 		FROM rates
@@ -1196,7 +1274,7 @@ func (s *Store) ListRates(ctx context.Context, tenantID string) ([]RateRecord, e
 	}
 	q += ` ORDER BY resource_type, meter_name, instance_type`
 
-	rows, err := s.pool.Query(ctx, q, args...)
+	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1244,13 +1322,13 @@ func (s *Store) InsertCostEntryBatch(ctx context.Context, entries []CostEntry) e
 			e.ResourceType, e.ResourceID, e.MeterName, e.MeteredValue,
 			e.CostAmount, e.Currency, e.PeriodStart, e.PeriodEnd)
 	}
-	_, err := s.pool.Exec(ctx, query, args...)
+	_, err := s.db.Exec(ctx, query, args...)
 	return err
 }
 
 // InsertCostEntry stores a computed cost record.
 func (s *Store) InsertCostEntry(ctx context.Context, entry CostEntry) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		INSERT INTO cost_entries
 			(metering_entry_id, rate_id, tenant_id, project_id, user_id, resource_type, resource_id, meter_name,
 			 metered_value, cost_amount, currency, period_start, period_end)
@@ -1265,7 +1343,7 @@ func (s *Store) InsertCostEntry(ctx context.Context, entry CostEntry) error {
 // RateCount returns the number of rates in the table.
 func (s *Store) RateCount(ctx context.Context) (int, error) {
 	var count int
-	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM rates`).Scan(&count)
+	err := s.db.QueryRow(ctx, `SELECT count(*) FROM rates`).Scan(&count)
 	return count, err
 }
 
@@ -1281,7 +1359,7 @@ func (s *Store) UpsertQuota(ctx context.Context, q QuotaRecord) (int64, error) {
 	}
 
 	var id int64
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		INSERT INTO quotas
 			(name, tenant_id, project_id, resource_type, meter_name, limit_value, unit, period, policy, thresholds, effective_from, effective_to)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -1297,7 +1375,7 @@ func (s *Store) UpsertQuota(ctx context.Context, q QuotaRecord) (int64, error) {
 
 // QuotasForTenant returns all active quotas for a tenant.
 func (s *Store) QuotasForTenant(ctx context.Context, tenantID string, at time.Time) ([]QuotaRecord, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT id, name, tenant_id, project_id, resource_type, meter_name, limit_value, unit, period, policy, thresholds, effective_from, effective_to
 		FROM quotas
 		WHERE tenant_id = $1
@@ -1330,7 +1408,7 @@ func (s *Store) QuotasForTenant(ctx context.Context, tenantID string, at time.Ti
 func (s *Store) GetQuota(ctx context.Context, id int64) (*QuotaRecord, error) {
 	var r QuotaRecord
 	var thresholdsJSON []byte
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT id, name, tenant_id, project_id, resource_type, meter_name, limit_value, unit, period, policy, thresholds, effective_from, effective_to
 		FROM quotas WHERE id = $1
 	`, id).Scan(&r.ID, &r.Name, &r.TenantID, &r.ProjectID, &r.ResourceType, &r.MeterName,
@@ -1355,7 +1433,7 @@ func (s *Store) ListQuotas(ctx context.Context, tenantID string) ([]QuotaRecord,
 		args = append(args, tenantID)
 	}
 	query += " ORDER BY tenant_id, meter_name"
-	rows, err := s.pool.Query(ctx, query, args...)
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1387,7 +1465,7 @@ func (s *Store) UpdateQuota(ctx context.Context, id int64, q QuotaRecord) error 
 			return err
 		}
 	}
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := s.db.Exec(ctx, `
 		UPDATE quotas SET name=$1, tenant_id=$2, project_id=$3, resource_type=$4, meter_name=$5,
 			limit_value=$6, unit=$7, period=$8, policy=$9, thresholds=$10
 		WHERE id = $11
@@ -1404,7 +1482,7 @@ func (s *Store) UpdateQuota(ctx context.Context, id int64, q QuotaRecord) error 
 
 // SoftDeleteQuota sets effective_to to now, making the quota inactive.
 func (s *Store) SoftDeleteQuota(ctx context.Context, id int64) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE quotas SET effective_to = NOW() WHERE id = $1 AND effective_to IS NULL`, id)
+	tag, err := s.db.Exec(ctx, `UPDATE quotas SET effective_to = NOW() WHERE id = $1 AND effective_to IS NULL`, id)
 	if err != nil {
 		return err
 	}
@@ -1421,7 +1499,7 @@ func (s *Store) CreateWallet(ctx context.Context, w WalletRecord) error {
 	if w.Thresholds != nil {
 		thresholdsJSON, _ = json.Marshal(w.Thresholds)
 	}
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		INSERT INTO wallets (id, tenant_id, project_id, currency, balance, balance_floor, reference_balance, lifecycle_state, thresholds)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`, w.ID, w.TenantID, w.ProjectID, w.Currency, w.Balance, w.BalanceFloor, w.ReferenceBalance, w.LifecycleState, thresholdsJSON)
@@ -1431,7 +1509,7 @@ func (s *Store) CreateWallet(ctx context.Context, w WalletRecord) error {
 func (s *Store) GetWallet(ctx context.Context, id string) (*WalletRecord, error) {
 	var w WalletRecord
 	var thresholdsJSON []byte
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT id, tenant_id, project_id, currency, balance, balance_floor, reference_balance, lifecycle_state, thresholds, created_at, updated_at
 		FROM wallets WHERE id = $1
 	`, id).Scan(&w.ID, &w.TenantID, &w.ProjectID, &w.Currency, &w.Balance, &w.BalanceFloor, &w.ReferenceBalance, &w.LifecycleState, &thresholdsJSON, &w.CreatedAt, &w.UpdatedAt)
@@ -1447,7 +1525,7 @@ func (s *Store) GetWallet(ctx context.Context, id string) (*WalletRecord, error)
 func (s *Store) GetWalletForTenant(ctx context.Context, tenantID string) (*WalletRecord, error) {
 	var w WalletRecord
 	var thresholdsJSON []byte
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT id, tenant_id, project_id, currency, balance, balance_floor, reference_balance, lifecycle_state, thresholds, created_at, updated_at
 		FROM wallets WHERE tenant_id = $1 AND lifecycle_state = 'active'
 		ORDER BY created_at DESC LIMIT 1
@@ -1464,7 +1542,7 @@ func (s *Store) GetWalletForTenant(ctx context.Context, tenantID string) (*Walle
 func (s *Store) TopUpWallet(ctx context.Context, walletID string, amount decimal.Decimal, externalRef string) (*WalletLedgerEntry, error) {
 	if externalRef != "" {
 		var exists bool
-		_ = s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM wallet_ledger_entries WHERE wallet_id = $1 AND external_ref = $2)`, walletID, externalRef).Scan(&exists)
+		_ = s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM wallet_ledger_entries WHERE wallet_id = $1 AND external_ref = $2)`, walletID, externalRef).Scan(&exists)
 		if exists {
 			return nil, fmt.Errorf("duplicate top-up: external_ref %s already applied", externalRef)
 		}
@@ -1562,7 +1640,7 @@ func (s *Store) AdjustWallet(ctx context.Context, walletID string, amount decima
 }
 
 func (s *Store) UnappliedCostEntries(ctx context.Context, tenantID string) ([]CostEntry, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT id, metering_entry_id, rate_id, tenant_id, project_id, user_id, resource_type, resource_id,
 		       meter_name, metered_value, cost_amount, currency, period_start, period_end, wallet_applied
 		FROM cost_entries
@@ -1591,7 +1669,7 @@ func (s *Store) WalletLedger(ctx context.Context, walletID string, limit int) ([
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT id, wallet_id, entry_type, amount, balance_after, currency, cost_entry_id, external_ref, reason, created_at
 		FROM wallet_ledger_entries WHERE wallet_id = $1 ORDER BY created_at DESC LIMIT $2
 	`, walletID, limit)
@@ -1620,7 +1698,7 @@ func (s *Store) WalletLedger(ctx context.Context, walletID string, limit int) ([
 }
 
 func (s *Store) AllTenantsWithWallets(ctx context.Context) ([]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT tenant_id FROM wallets WHERE lifecycle_state = 'active'`)
+	rows, err := s.db.Query(ctx, `SELECT DISTINCT tenant_id FROM wallets WHERE lifecycle_state = 'active'`)
 	if err != nil {
 		return nil, err
 	}
@@ -1640,7 +1718,7 @@ func (s *Store) AllTenantsWithWallets(ctx context.Context) ([]string, error) {
 // for a given tenant and meter. Used for overcommit validation.
 func (s *Store) ProjectLimitSum(ctx context.Context, tenantID, meterName string, excludeID int64) (float64, error) {
 	var sum float64
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(limit_value), 0)
 		FROM quotas
 		WHERE tenant_id = $1 AND meter_name = $2
@@ -1654,7 +1732,7 @@ func (s *Store) ProjectLimitSum(ctx context.Context, tenantID, meterName string,
 // TenantQuotaLimit returns the tenant-level (non-project) limit for a meter.
 func (s *Store) TenantQuotaLimit(ctx context.Context, tenantID, meterName string) (float64, error) {
 	var limit float64
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(limit_value, 0)
 		FROM quotas
 		WHERE tenant_id = $1 AND meter_name = $2
@@ -1672,7 +1750,7 @@ func (s *Store) TenantQuotaLimit(ctx context.Context, tenantID, meterName string
 // MeteringSumByProject returns the metered value for a tenant + project + meter.
 func (s *Store) MeteringSumByProject(ctx context.Context, tenantID, projectID, meterName string, from, to time.Time) (float64, error) {
 	var sum float64
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(value), 0)
 		FROM metering_entries
 		WHERE tenant_id = $1 AND project_id = $2 AND meter_name = $3
@@ -1684,7 +1762,7 @@ func (s *Store) MeteringSumByProject(ctx context.Context, tenantID, projectID, m
 // MeteringSum returns the total metered value for a tenant + meter in a time range.
 func (s *Store) MeteringSum(ctx context.Context, tenantID, meterName string, from, to time.Time) (float64, error) {
 	var sum float64
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(value), 0)
 		FROM metering_entries
 		WHERE tenant_id = $1 AND meter_name = $2
@@ -1697,7 +1775,7 @@ func (s *Store) MeteringSum(ctx context.Context, tenantID, meterName string, fro
 // Used by the cumulative tier sweep to get prior usage before the current entry.
 func (s *Store) MeteringSumBefore(ctx context.Context, tenantID, meterName string, from, to time.Time, beforeID int64) (float64, error) {
 	var sum float64
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(value), 0)
 		FROM metering_entries
 		WHERE tenant_id = $1 AND meter_name = $2
@@ -1710,7 +1788,7 @@ func (s *Store) MeteringSumBefore(ctx context.Context, tenantID, meterName strin
 // CostSum returns the total cost for a tenant + meter in a time range.
 func (s *Store) CostSum(ctx context.Context, tenantID, meterName string, from, to time.Time) (float64, error) {
 	var sum float64
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(cost_amount), 0)
 		FROM cost_entries
 		WHERE tenant_id = $1 AND meter_name = $2
@@ -1722,7 +1800,7 @@ func (s *Store) CostSum(ctx context.Context, tenantID, meterName string, from, t
 // TenantCostSum returns the total cost across all meters for a tenant.
 func (s *Store) TenantCostSum(ctx context.Context, tenantID string, from, to time.Time) (float64, error) {
 	var sum float64
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(cost_amount), 0)
 		FROM cost_entries
 		WHERE tenant_id = $1
@@ -1734,14 +1812,14 @@ func (s *Store) TenantCostSum(ctx context.Context, tenantID string, from, to tim
 // QuotaCount returns the number of quotas in the table.
 func (s *Store) QuotaCount(ctx context.Context) (int, error) {
 	var count int
-	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM quotas`).Scan(&count)
+	err := s.db.QueryRow(ctx, `SELECT count(*) FROM quotas`).Scan(&count)
 	return count, err
 }
 
 // InsertAlert records a threshold breach. Returns false if already fired
 // (UNIQUE constraint on tenant+meter+threshold+period).
 func (s *Store) InsertAlert(ctx context.Context, alert AlertRecord) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := s.db.Exec(ctx, `
 		INSERT INTO alerts
 			(tenant_id, meter_name, threshold_pct, consumed, limit_value, period, state, fired_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
@@ -1757,7 +1835,7 @@ func (s *Store) InsertAlert(ctx context.Context, alert AlertRecord) (bool, error
 
 // AlertsForTenant returns all alerts for a tenant in a period.
 func (s *Store) AlertsForTenant(ctx context.Context, tenantID, period string) ([]AlertRecord, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT id, tenant_id, meter_name, threshold_pct, consumed, limit_value, period, state, fired_at
 		FROM alerts
 		WHERE tenant_id = $1 AND period = $2
@@ -1782,7 +1860,7 @@ func (s *Store) AlertsForTenant(ctx context.Context, tenantID, period string) ([
 
 // AlertsForTenantMeter returns alerts for a specific tenant + meter + period.
 func (s *Store) AlertsForTenantMeter(ctx context.Context, tenantID, meterName, period string) ([]AlertRecord, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT id, tenant_id, meter_name, threshold_pct, consumed, limit_value, period, state, fired_at
 		FROM alerts
 		WHERE tenant_id = $1 AND meter_name = $2 AND period = $3
@@ -1807,7 +1885,7 @@ func (s *Store) AlertsForTenantMeter(ctx context.Context, tenantID, meterName, p
 
 // AllTenantsWithQuotas returns distinct tenant IDs that have active quotas.
 func (s *Store) AllTenantsWithQuotas(ctx context.Context, at time.Time) ([]string, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT DISTINCT tenant_id FROM quotas
 		WHERE effective_from <= $1 AND (effective_to IS NULL OR effective_to > $1)
 	`, at)
@@ -1890,7 +1968,7 @@ func (s *Store) CostReport(ctx context.Context, tenantID, resourceType, groupBy,
 		ORDER BY %scost DESC
 	`, dateSelect, groupCol, where, dateGroup, groupCol, dateOrder)
 
-	rows, err := s.pool.Query(ctx, query, args...)
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("cost report: %w", err)
 	}
@@ -1950,7 +2028,7 @@ func (s *Store) CostBreakdown(ctx context.Context, tenantID, resourceType string
 		LIMIT $%d
 	`, where, argN)
 
-	rows, err := s.pool.Query(ctx, query, args...)
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("cost breakdown: %w", err)
 	}
@@ -1980,7 +2058,7 @@ func (s *Store) CostBreakdown(ctx context.Context, tenantID, resourceType string
 // bounded in size and the cost is negligible.
 func (s *Store) PipelineSummary(ctx context.Context) (*PipelineSummary, error) {
 	var ps PipelineSummary
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT
 			(SELECT n_live_tup::int FROM pg_stat_user_tables WHERE relname = 'raw_events'),
 			(SELECT n_live_tup::int FROM pg_stat_user_tables WHERE relname = 'metering_entries'),
@@ -2000,7 +2078,7 @@ func (s *Store) PipelineSummary(ctx context.Context) (*PipelineSummary, error) {
 // SplunkCursor returns the last-sent raw_events ID.
 func (s *Store) SplunkCursor(ctx context.Context) (int64, error) {
 	var id int64
-	err := s.pool.QueryRow(ctx, "SELECT last_sent_id FROM splunk_cursor WHERE id = 1").Scan(&id)
+	err := s.db.QueryRow(ctx, "SELECT last_sent_id FROM splunk_cursor WHERE id = 1").Scan(&id)
 	if err != nil {
 		return 0, nil
 	}
@@ -2009,7 +2087,7 @@ func (s *Store) SplunkCursor(ctx context.Context) (int64, error) {
 
 // AdvanceSplunkCursor updates the cursor to the given ID.
 func (s *Store) AdvanceSplunkCursor(ctx context.Context, lastSentID int64) error {
-	_, err := s.pool.Exec(ctx,
+	_, err := s.db.Exec(ctx,
 		"UPDATE splunk_cursor SET last_sent_id = $1, updated_at = NOW() WHERE id = 1",
 		lastSentID)
 	return err
@@ -2031,7 +2109,7 @@ type RawEventRow struct {
 
 // RawEventsSince returns raw events with id > afterID, ordered by id.
 func (s *Store) RawEventsSince(ctx context.Context, afterID int64, limit int) ([]RawEventRow, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT id, event_id, event_type, event_source, event_time,
 		       tenant_id, resource_type, resource_id, data, received_at
 		FROM raw_events WHERE id > $1
@@ -2071,7 +2149,7 @@ func (s *Store) GetSizingStats(ctx context.Context) SizingStats {
 
 	const tables = `'raw_events','metering_entries','cost_entries','wallet_ledger_entries'`
 
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT relname, n_live_tup, pg_relation_size(relid)
 		FROM pg_stat_user_tables
 		WHERE relname IN (`+tables+`)`)
@@ -2087,14 +2165,14 @@ func (s *Store) GetSizingStats(ctx context.Context) SizingStats {
 		}
 	}
 
-	if err := s.pool.QueryRow(ctx,
+	if err := s.db.QueryRow(ctx,
 		`SELECT count(*) FROM metering_entries WHERE rated_at IS NULL`,
 	).Scan(&stats.UnratedEntries); err != nil {
 		stats.UnratedEntries = 0
 	}
 
 	var lagSecs *float64
-	if err := s.pool.QueryRow(ctx, `
+	if err := s.db.QueryRow(ctx, `
 		SELECT EXTRACT(EPOCH FROM (NOW() - MIN(period_start)))
 		FROM metering_entries WHERE rated_at IS NULL`,
 	).Scan(&lagSecs); err == nil && lagSecs != nil {
@@ -2105,7 +2183,7 @@ func (s *Store) GetSizingStats(ctx context.Context) SizingStats {
 }
 
 func (s *Store) UpsertPricingRule(ctx context.Context, name string, ruleJSON json.RawMessage) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		INSERT INTO pricing_rules (name, rule_json)
 		VALUES ($1, $2)
 		ON CONFLICT (name) DO UPDATE SET
@@ -2118,7 +2196,7 @@ func (s *Store) UpsertPricingRule(ctx context.Context, name string, ruleJSON jso
 
 func (s *Store) GetPricingRule(ctx context.Context, name string) (*PricingRule, error) {
 	var r PricingRule
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT id, name, rule_json, version, created_at, updated_at
 		FROM pricing_rules WHERE name = $1
 	`, name).Scan(&r.ID, &r.Name, &r.RuleJSON, &r.Version, &r.CreatedAt, &r.UpdatedAt)
@@ -2129,7 +2207,7 @@ func (s *Store) GetPricingRule(ctx context.Context, name string) (*PricingRule, 
 }
 
 func (s *Store) AllPricingRules(ctx context.Context) ([]PricingRule, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT id, name, rule_json, version, created_at, updated_at
 		FROM pricing_rules ORDER BY name
 	`)
@@ -2151,6 +2229,6 @@ func (s *Store) AllPricingRules(ctx context.Context) ([]PricingRule, error) {
 
 func (s *Store) PricingRulesVersion(ctx context.Context) (int64, error) {
 	var v int64
-	err := s.pool.QueryRow(ctx, `SELECT COALESCE(SUM(version), 0) FROM pricing_rules`).Scan(&v)
+	err := s.db.QueryRow(ctx, `SELECT COALESCE(SUM(version), 0) FROM pricing_rules`).Scan(&v)
 	return v, err
 }

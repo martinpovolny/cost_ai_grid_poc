@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -29,8 +31,8 @@ var _ ServerInterface = (*APIHandler)(nil)
 const (
 	// VMaaS/CaaS event types from OSAC metering collector.
 	eventTypeComputeInstance = "osac.compute_instance.lifecycle"
-	eventTypeCluster        = "osac.cluster.lifecycle"
-	eventTypeModel          = "osac.model.lifecycle"
+	eventTypeCluster         = "osac.cluster.lifecycle"
+	eventTypeModel           = "osac.model.lifecycle"
 	eventTypeInferenceTokens = "inference.tokens.used"
 
 	// OSAC metering-service v1 event types (OSAC-985).
@@ -102,51 +104,8 @@ func (h *APIHandler) ProcessKafkaEvent(ctx context.Context, topic string, payloa
 	if err := json.Unmarshal(payload, &ce); err != nil {
 		return fmt.Errorf("kafka: invalid CloudEvent JSON: %w", err)
 	}
-	if ce.ID == "" || ce.Type == "" {
-		return fmt.Errorf("kafka: missing id or type")
-	}
-
-	if isOSACv1EventType(ce.Type) || ce.Type == eventTypeInferenceUsage {
-		if ce.OSACResourceID == "" || ce.OSACResourceType == "" || ce.OSACTenant == "" {
-			return fmt.Errorf("kafka: v1 event %s missing required extensions (osacresourceid=%q, osacresourcetype=%q, osactenant=%q)",
-				ce.Type, ce.OSACResourceID, ce.OSACResourceType, ce.OSACTenant)
-		}
-	}
-
-	resourceType, resourceID, tenantID := classifyEvent(ce)
-	fullJSON, _ := json.Marshal(ce)
-
-	inserted, err := h.store.InsertRawEvent(ctx, inventory.RawEvent{
-		EventID:      ce.ID,
-		EventType:    ce.Type,
-		EventSource:  ce.Source,
-		EventTime:    ce.Time,
-		TenantID:     tenantID,
-		ResourceType: resourceType,
-		ResourceID:   resourceID,
-		Data:         fullJSON,
-	})
-	if err != nil {
-		return fmt.Errorf("kafka: store raw event: %w", err)
-	}
-	if !inserted {
-		return nil
-	}
-
-	switch {
-	case ce.Type == eventTypeComputeInstance:
-		return h.processComputeInstanceEvent(ctx, ce)
-	case ce.Type == eventTypeCluster:
-		return h.processClusterEvent(ctx, ce)
-	case ce.Type == eventTypeModel || ce.Type == eventTypeInferenceTokens || ce.Type == eventTypeInferenceUsage:
-		return h.processModelEvent(ctx, ce)
-	case isOSACv1EventType(ce.Type):
-		return h.processOSACResourceEvent(ctx, ce)
-	default:
-		if h.customMetrics != nil && h.customMetrics.HasEventType(ce.Type) {
-			return h.customMetrics.ProcessEvent(ctx, h.store, ce.Type, ce.Data, ce.Time, h.logger)
-		}
-		h.logger.Warn("kafka: unknown event type", "type", ce.Type)
+	if err := h.processEvents(ctx, []cloudEventInternal{ce}); err != nil {
+		return fmt.Errorf("kafka: process CloudEvent: %w", err)
 	}
 	return nil
 }
@@ -189,8 +148,6 @@ func isBudget(unit string) bool {
 	}
 	return false
 }
-
-
 
 // ---------------------------------------------------------------------------
 // Health probes
@@ -341,80 +298,150 @@ type maaSEventData struct {
 	DurationMs          int64   `json:"duration_ms"`
 }
 
-// IngestEvent implements ServerInterface.
+const maxBatchEvents = 100
+
+type eventBatch struct {
+	Events []cloudEventInternal `json:"events"`
+}
+
+type eventValidationError struct{ message string }
+
+func (e *eventValidationError) Error() string { return e.message }
+
+// IngestEvent accepts the legacy single-event form. It intentionally uses the
+// same receipt-protected processing path as batch delivery.
 func (h *APIHandler) IngestEvent(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-
 	var ce cloudEventInternal
-	if err := json.NewDecoder(r.Body).Decode(&ce); err != nil {
-		writeErrorJSON(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+	if err := decodeJSONBody(w, r, &ce); err != nil {
+		writeEventError(w, err)
 		return
 	}
-
-	if ce.ID == "" || ce.Type == "" {
-		writeErrorJSON(w, "id and type are required", http.StatusBadRequest)
+	if err := h.processEvents(r.Context(), []cloudEventInternal{ce}); err != nil {
+		writeEventError(w, err)
 		return
 	}
+	metrics.EventsProcessedTotal.WithLabelValues(ce.Type, "accepted").Inc()
+	w.WriteHeader(http.StatusNoContent)
+}
 
-	// Validate event timestamp to prevent backdating attacks.
-	// Events with timestamps too far in the past could inject data into
-	// closed billing periods, manipulate quota sums, or corrupt cost history.
-	// Events too far in the future indicate a misconfigured clock.
-	if !ce.Time.IsZero() {
-		now := time.Now().UTC()
-		age := now.Sub(ce.Time.UTC())
-		if age > maxEventAge {
-			metrics.EventsRejectedTotal.WithLabelValues("timestamp_too_old").Inc()
-			h.logger.Warn("rejected event: timestamp too old",
-				"event_id", ce.ID,
-				"event_type", ce.Type,
-				"event_time", ce.Time.UTC(),
-				"age_minutes", age.Minutes(),
-				"max_age", maxEventAge,
-			)
-			writeErrorJSON(w,
-				fmt.Sprintf("event time is too old (%.0f minutes ago; max %s)",
-					age.Minutes(), maxEventAge),
-				http.StatusBadRequest)
-			return
+// IngestEventBatch accepts the Cost Management adapter's durable delivery
+// unit. Every member is validated before transaction work begins; all receipt,
+// raw-event, inventory, and event-driven metering writes commit or roll back
+// together.
+func (h *APIHandler) IngestEventBatch(w http.ResponseWriter, r *http.Request) {
+	var batch eventBatch
+	if err := decodeJSONBody(w, r, &batch); err != nil {
+		writeEventError(w, err)
+		return
+	}
+	if len(batch.Events) == 0 || len(batch.Events) > maxBatchEvents {
+		writeEventError(w, &eventValidationError{message: fmt.Sprintf("events must contain between 1 and %d items", maxBatchEvents)})
+		return
+	}
+	if err := h.processEvents(r.Context(), batch.Events); err != nil {
+		writeEventError(w, err)
+		return
+	}
+	for _, ce := range batch.Events {
+		metrics.EventsProcessedTotal.WithLabelValues(ce.Type, "accepted").Inc()
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, target interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+	if err := json.NewDecoder(r.Body).Decode(target); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return fmt.Errorf("request body exceeds %d bytes: %w", maxRequestBodySize, err)
 		}
-		if age < -maxEventFuture {
-			metrics.EventsRejectedTotal.WithLabelValues("timestamp_too_future").Inc()
-			h.logger.Warn("rejected event: timestamp too far in the future",
-				"event_id", ce.ID,
-				"event_type", ce.Type,
-				"event_time", ce.Time.UTC(),
-				"future_by", (-age).Round(time.Second),
-				"max_future", maxEventFuture,
-			)
-			writeErrorJSON(w,
-				fmt.Sprintf("event time is too far in the future (%s; max %s)",
-					(-age).Round(time.Second), maxEventFuture),
-				http.StatusBadRequest)
-			return
-		}
-		// Event is within the acceptance window but drifted beyond the warn threshold.
-		// Count it so operators can detect misconfigured source clocks early.
-		if age > warnEventDrift {
-			metrics.EventsTimestampDriftTotal.WithLabelValues("past").Inc()
-			h.logger.Info("accepted event with drifted timestamp",
-				"event_id", ce.ID,
-				"event_type", ce.Type,
-				"event_time", ce.Time.UTC(),
-				"drift", age.Round(time.Second),
-			)
-		} else if age < -warnEventDrift {
-			metrics.EventsTimestampDriftTotal.WithLabelValues("future").Inc()
-			h.logger.Info("accepted event with future-drifted timestamp",
-				"event_id", ce.ID,
-				"event_type", ce.Type,
-				"event_time", ce.Time.UTC(),
-				"drift", (-age).Round(time.Second),
-			)
+		return &eventValidationError{message: "invalid JSON: " + err.Error()}
+	}
+	return nil
+}
+
+func writeEventError(w http.ResponseWriter, err error) {
+	var invalid *eventValidationError
+	switch {
+	case errors.Is(err, inventory.ErrReceiptCollision):
+		writeErrorJSON(w, "event identity was previously used for different content", http.StatusConflict)
+	case errors.As(err, &invalid):
+		writeErrorJSON(w, invalid.Error(), http.StatusBadRequest)
+	case errors.As(err, new(*http.MaxBytesError)):
+		writeErrorJSON(w, "request body too large", http.StatusRequestEntityTooLarge)
+	default:
+		writeErrorJSON(w, "failed to process events", http.StatusInternalServerError)
+	}
+}
+
+func (h *APIHandler) processEvents(ctx context.Context, events []cloudEventInternal) error {
+	for _, ce := range events {
+		if err := h.validateCloudEvent(ce); err != nil {
+			return err
 		}
 	}
 
-	ctx := r.Context()
+	return h.store.InTransaction(ctx, func(txStore *inventory.Store) error {
+		txHandler := &APIHandler{
+			store:         txStore,
+			meter:         h.meter,
+			cfg:           h.cfg,
+			customMetrics: h.customMetrics,
+			logger:        h.logger,
+		}
+		if h.meter != nil {
+			txHandler.meter = h.meter.WithStore(txStore)
+		}
+		for _, ce := range events {
+			digest, err := cloudEventDigest(ce)
+			if err != nil {
+				return fmt.Errorf("digest event %s: %w", ce.ID, err)
+			}
+			claimed, err := txStore.ClaimIngestionReceipt(ctx, ce.Source, ce.ID, digest)
+			if err != nil {
+				return err
+			}
+			if !claimed {
+				continue
+			}
+			if err := txHandler.processEvent(ctx, ce); err != nil {
+				return fmt.Errorf("process event %s: %w", ce.ID, err)
+			}
+		}
+		return nil
+	})
+}
+
+func cloudEventDigest(ce cloudEventInternal) (string, error) {
+	payload, err := json.Marshal(ce)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(payload)
+	return fmt.Sprintf("%x", sum[:]), nil
+}
+
+func (h *APIHandler) validateCloudEvent(ce cloudEventInternal) error {
+	if ce.SpecVersion != "1.0" {
+		return &eventValidationError{message: "specversion must be 1.0"}
+	}
+	if ce.ID == "" || ce.Type == "" || ce.Source == "" || ce.Time.IsZero() {
+		return &eventValidationError{message: "specversion, id, type, source, and time are required"}
+	}
+	if len(ce.Data) == 0 || string(ce.Data) == "null" {
+		return &eventValidationError{message: "event data is required"}
+	}
+
+	now := time.Now().UTC()
+	age := now.Sub(ce.Time.UTC())
+	if age > maxEventAge {
+		metrics.EventsRejectedTotal.WithLabelValues("timestamp_too_old").Inc()
+		return &eventValidationError{message: fmt.Sprintf("event time is too old (%.0f minutes ago; max %s)", age.Minutes(), maxEventAge)}
+	}
+	if age < -maxEventFuture {
+		metrics.EventsRejectedTotal.WithLabelValues("timestamp_too_future").Inc()
+		return &eventValidationError{message: fmt.Sprintf("event time is too far in the future (%s; max %s)", (-age).Round(time.Second), maxEventFuture)}
+	}
 
 	resourceType, resourceID, tenantID := classifyEvent(ce)
 	if (resourceID == "" || tenantID == "") && h.customMetrics != nil && h.customMetrics.HasEventType(ce.Type) {
@@ -423,68 +450,62 @@ func (h *APIHandler) IngestEvent(w http.ResponseWriter, r *http.Request) {
 			resourceType, resourceID, tenantID = h.customMetrics.ClassifyEvent(ce.Type, dataMap)
 		}
 	}
-	if resourceID == "" || tenantID == "" {
-		writeErrorJSON(w, "event data must include resource_id and tenant_id", http.StatusBadRequest)
-		return
+	if resourceType == "" || resourceID == "" || tenantID == "" {
+		return &eventValidationError{message: "event data must include resource_id and tenant_id"}
 	}
 	if len(resourceID) > maxIDLength || len(tenantID) > maxIDLength {
-		writeErrorJSON(w, "resource_id or tenant_id exceeds maximum length", http.StatusBadRequest)
-		return
+		return &eventValidationError{message: "resource_id or tenant_id exceeds maximum length"}
 	}
-
-	fullJSON, _ := json.Marshal(ce)
-	inserted, err := h.store.InsertRawEvent(ctx, inventory.RawEvent{
-		EventID:      ce.ID,
-		EventType:    ce.Type,
-		EventSource:  ce.Source,
-		EventTime:    ce.Time,
-		TenantID:     tenantID,
-		ResourceType: resourceType,
-		ResourceID:   resourceID,
-		Data:         fullJSON,
-	})
-	if err != nil {
-		writeErrorJSON(w, "failed to store event", http.StatusInternalServerError)
-		h.logger.Error("failed to store raw event", "error", err, "event_id", ce.ID)
-		return
-	}
-	if !inserted {
-		metrics.EventsProcessedTotal.WithLabelValues(ce.Type, "duplicate").Inc()
-		w.WriteHeader(http.StatusConflict)
-		writeJSON(w, map[string]string{"status": "duplicate"})
-		return
-	}
-
-	if h.kafkaPublisher != nil {
-		h.logger.Info("kafka: publishing event", "type", ce.Type, "id", ce.ID)
-		h.kafkaPublisher.PublishEvent(ctx, ce.Type, resourceID, tenantID, fullJSON)
-	}
-
-	var processingErr error
-	switch ce.Type {
-	case eventTypeComputeInstance:
-		processingErr = h.processComputeInstanceEvent(ctx, ce)
-	case eventTypeCluster:
-		processingErr = h.processClusterEvent(ctx, ce)
-	case eventTypeModel, eventTypeInferenceTokens:
-		processingErr = h.processModelEvent(ctx, ce)
-	default:
-		if h.customMetrics != nil && h.customMetrics.HasEventType(ce.Type) {
-			processingErr = h.customMetrics.ProcessEvent(ctx, h.store, ce.Type, ce.Data, ce.Time, h.logger)
-		} else {
-			h.logger.Warn("unknown CloudEvent type", "type", ce.Type)
+	if isOSACv1EventType(ce.Type) || ce.Type == eventTypeInferenceUsage {
+		if ce.OSACResourceID == "" || ce.OSACResourceType == "" || ce.OSACTenant == "" {
+			return &eventValidationError{message: "OSAC v1 event is missing required resource extensions"}
+		}
+		var data meteringData
+		if err := json.Unmarshal(ce.Data, &data); err != nil {
+			return &eventValidationError{message: "invalid OSAC v1 event data"}
+		}
+		if data.ResourceID == "" || data.ResourceType == "" || data.TenantID == "" ||
+			data.ResourceID != ce.OSACResourceID || data.ResourceType != ce.OSACResourceType || data.TenantID != ce.OSACTenant {
+			return &eventValidationError{message: "OSAC v1 data identity must match CloudEvent extensions"}
 		}
 	}
+	return nil
+}
 
-	if processingErr != nil {
-		metrics.EventsProcessedTotal.WithLabelValues(ce.Type, "error").Inc()
-		h.logger.Error("event processing failed", "error", processingErr, "event_id", ce.ID, "type", ce.Type)
-		writeErrorJSON(w, "event stored but processing failed", http.StatusInternalServerError)
-		return
+func (h *APIHandler) processEvent(ctx context.Context, ce cloudEventInternal) error {
+	resourceType, resourceID, tenantID := classifyEvent(ce)
+	if (resourceID == "" || tenantID == "") && h.customMetrics != nil && h.customMetrics.HasEventType(ce.Type) {
+		var dataMap map[string]interface{}
+		if err := json.Unmarshal(ce.Data, &dataMap); err == nil {
+			resourceType, resourceID, tenantID = h.customMetrics.ClassifyEvent(ce.Type, dataMap)
+		}
+	}
+	fullJSON, err := json.Marshal(ce)
+	if err != nil {
+		return fmt.Errorf("marshal CloudEvent: %w", err)
+	}
+	if _, err := h.store.InsertRawEvent(ctx, inventory.RawEvent{
+		EventID: ce.ID, EventType: ce.Type, EventSource: ce.Source, EventTime: ce.Time,
+		TenantID: tenantID, ResourceType: resourceType, ResourceID: resourceID, Data: fullJSON,
+	}); err != nil {
+		return err
 	}
 
-	metrics.EventsProcessedTotal.WithLabelValues(ce.Type, "accepted").Inc()
-	w.WriteHeader(http.StatusNoContent)
+	switch {
+	case isOSACv1EventType(ce.Type) || ce.Type == eventTypeInferenceUsage:
+		return h.processOSACResourceEvent(ctx, ce)
+	case ce.Type == eventTypeComputeInstance:
+		return h.processComputeInstanceEvent(ctx, ce)
+	case ce.Type == eventTypeCluster:
+		return h.processClusterEvent(ctx, ce)
+	case ce.Type == eventTypeModel || ce.Type == eventTypeInferenceTokens:
+		return h.processModelEvent(ctx, ce)
+	case h.customMetrics != nil && h.customMetrics.HasEventType(ce.Type):
+		return h.customMetrics.ProcessEvent(ctx, h.store, ce.Type, ce.Data, ce.Time, h.logger)
+	default:
+		h.logger.Warn("unknown CloudEvent type", "type", ce.Type)
+		return nil
+	}
 }
 
 func isOSACv1EventType(t string) bool {
@@ -692,7 +713,7 @@ func (h *APIHandler) processModelEvent(ctx context.Context, ce cloudEventInterna
 		return err
 	}
 
-	h.meter.MeterMaaSEvent(ctx, metering.MaaSUsage{
+	if err := h.meter.MeterMaaSEvent(ctx, metering.MaaSUsage{
 		ModelID:           data.ModelID,
 		ModelName:         data.ModelName,
 		TenantID:          data.TenantID,
@@ -705,7 +726,9 @@ func (h *APIHandler) processModelEvent(ctx context.Context, ce cloudEventInterna
 		Requests:          data.Requests,
 		EventTime:         ce.Time,
 		DurationSeconds:   data.DurationSeconds,
-	})
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -856,7 +879,7 @@ func (h *APIHandler) processOSACInference(ctx context.Context, ce cloudEventInte
 		return fmt.Errorf("osac v1: upsert maas_inference: %w", err)
 	}
 
-	h.meter.MeterMaaSEvent(ctx, metering.MaaSUsage{
+	if err := h.meter.MeterMaaSEvent(ctx, metering.MaaSUsage{
 		ModelID:           modelID,
 		ModelName:         bd.Model,
 		TenantID:          tenantID,
@@ -867,7 +890,9 @@ func (h *APIHandler) processOSACInference(ctx context.Context, ce cloudEventInte
 		Requests:          1,
 		EventTime:         ce.Time,
 		DurationSeconds:   durationSeconds,
-	})
+	}); err != nil {
+		return err
+	}
 
 	h.logger.Info("osac v1: metered inference",
 		"model", bd.Model,
@@ -1205,9 +1230,9 @@ func (h *APIHandler) GetQuotaStatus(w http.ResponseWriter, r *http.Request, tena
 	}
 
 	resp := struct {
-		TenantID string                            `json:"tenant_id"`
-		Period   string                            `json:"period"`
-		Quotas   []inventory.QuotaStatus           `json:"quotas"`
+		TenantID string                             `json:"tenant_id"`
+		Period   string                             `json:"period"`
+		Quotas   []inventory.QuotaStatus            `json:"quotas"`
 		Projects map[string][]inventory.QuotaStatus `json:"projects,omitempty"`
 	}{
 		TenantID: tenantID,
@@ -1435,7 +1460,7 @@ type costReportMeta struct {
 	Total      kokuCostTotal     `json:"total"`
 	Period     string            `json:"period"`
 	GroupBy    string            `json:"group_by"`
-	Resolution string           `json:"resolution,omitempty"`
+	Resolution string            `json:"resolution,omitempty"`
 	Filters    map[string]string `json:"filters"`
 }
 
@@ -1841,4 +1866,3 @@ func (h *APIHandler) RegisterDebugRoutes(mux *http.ServeMux) {
 		}
 	})
 }
-

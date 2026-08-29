@@ -13,24 +13,25 @@ The API is defined by the [OpenAPI 3.0.3 specification](openapi.yaml).
 | 1 | GET | `/healthz` | Kubernetes liveness probe |
 | 2 | GET | `/readyz` | Kubernetes readiness probe (checks DB) |
 | 3 | GET | `/api/v1/debug/config` | Diagnostic configuration (secrets masked) |
-| 4 | POST | `/api/v1/events` | Ingest CloudEvents (VMaaS, CaaS, MaaS, IPP, custom) |
-| 5 | GET | `/api/v1/rates` | List rate cards (JSON or CSV) |
-| 6 | POST | `/api/v1/quotas` | Create a quota or budget |
-| 7 | GET | `/api/v1/quotas` | List all active quotas (with optional status enrichment) |
-| 8 | PUT | `/api/v1/quotas/{id}` | Update a quota |
-| 9 | DELETE | `/api/v1/quotas/{id}` | Soft-delete a quota |
-| 10 | GET | `/api/v1/quotas/{tenant_id}` | Quota consumption status for a tenant |
-| 11 | POST | `/api/v1/wallets` | Create a prepaid wallet |
-| 12 | GET | `/api/v1/wallets/{id}` | Wallet balance and status |
-| 13 | POST | `/api/v1/wallets/{id}/top-ups` | Add funds to a wallet |
-| 14 | POST | `/api/v1/wallets/{id}/adjustments` | Manual balance adjustment |
-| 15 | GET | `/api/v1/wallets/{id}/ledger` | Wallet transaction audit trail |
-| 16 | GET | `/api/v1/reports/costs` | Aggregated cost report (Koku-compatible, JSON or CSV) |
-| 17 | GET | `/api/v1/reports/breakdown` | Per-resource cost line items (JSON or CSV) |
-| 18 | GET | `/api/v1/reports/summary` | Pipeline health summary |
-| 19 | GET | `/api/v1/customers/{id}/entitlements/{key}/value` | IPP-compatible balance check |
-| 20 | POST | `/api/v1/reconcile` | Trigger manual OSAC reconciliation |
-| 21 | GET | `/debug/dashboard` | Built-in diagnostic dashboard (HTML) |
+| 4 | POST | `/api/v1/events` | Legacy single CloudEvent ingestion |
+| 5 | POST | `/api/v1/events/batch` | Atomic OSAC adapter batch ingestion with replay protection |
+| 6 | GET | `/api/v1/rates` | List rate cards (JSON or CSV) |
+| 7 | POST | `/api/v1/quotas` | Create a quota or budget |
+| 8 | GET | `/api/v1/quotas` | List all active quotas (with optional status enrichment) |
+| 9 | PUT | `/api/v1/quotas/{id}` | Update a quota |
+| 10 | DELETE | `/api/v1/quotas/{id}` | Soft-delete a quota |
+| 11 | GET | `/api/v1/quotas/{tenant_id}` | Quota consumption status for a tenant |
+| 12 | POST | `/api/v1/wallets` | Create a prepaid wallet |
+| 13 | GET | `/api/v1/wallets/{id}` | Wallet balance and status |
+| 14 | POST | `/api/v1/wallets/{id}/top-ups` | Add funds to a wallet |
+| 15 | POST | `/api/v1/wallets/{id}/adjustments` | Manual balance adjustment |
+| 16 | GET | `/api/v1/wallets/{id}/ledger` | Wallet transaction audit trail |
+| 17 | GET | `/api/v1/reports/costs` | Aggregated cost report (Koku-compatible, JSON or CSV) |
+| 18 | GET | `/api/v1/reports/breakdown` | Per-resource cost line items (JSON or CSV) |
+| 19 | GET | `/api/v1/reports/summary` | Pipeline health summary |
+| 20 | GET | `/api/v1/customers/{id}/entitlements/{key}/value` | IPP-compatible balance check |
+| 21 | POST | `/api/v1/reconcile` | Trigger manual OSAC reconciliation |
+| 22 | GET | `/debug/dashboard` | Built-in diagnostic dashboard (HTML) |
 
 ### Metrics Server (separate port, no auth)
 
