@@ -104,7 +104,7 @@ func (h *APIHandler) ProcessKafkaEvent(ctx context.Context, topic string, payloa
 	if err := json.Unmarshal(payload, &ce); err != nil {
 		return fmt.Errorf("kafka: invalid CloudEvent JSON: %w", err)
 	}
-	if err := h.processEvents(ctx, []cloudEventInternal{ce}); err != nil {
+	if err := h.processEventsWithPublish(ctx, []cloudEventInternal{ce}, false); err != nil {
 		return fmt.Errorf("kafka: process CloudEvent: %w", err)
 	}
 	return nil
@@ -375,13 +375,18 @@ func writeEventError(w http.ResponseWriter, err error) {
 }
 
 func (h *APIHandler) processEvents(ctx context.Context, events []cloudEventInternal) error {
+	return h.processEventsWithPublish(ctx, events, true)
+}
+
+func (h *APIHandler) processEventsWithPublish(ctx context.Context, events []cloudEventInternal, publish bool) error {
 	for _, ce := range events {
 		if err := h.validateCloudEvent(ce); err != nil {
 			return err
 		}
 	}
 
-	return h.store.InTransaction(ctx, func(txStore *inventory.Store) error {
+	claimedEvents := make([]cloudEventInternal, 0, len(events))
+	if err := h.store.InTransaction(ctx, func(txStore *inventory.Store) error {
 		txHandler := &APIHandler{
 			store:         txStore,
 			meter:         h.meter,
@@ -407,9 +412,35 @@ func (h *APIHandler) processEvents(ctx context.Context, events []cloudEventInter
 			if err := txHandler.processEvent(ctx, ce); err != nil {
 				return fmt.Errorf("process event %s: %w", ce.ID, err)
 			}
+			claimedEvents = append(claimedEvents, ce)
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	if publish && h.kafkaPublisher != nil {
+		for _, ce := range claimedEvents {
+			h.publishEvent(ctx, ce)
+		}
+	}
+	return nil
+}
+
+func (h *APIHandler) publishEvent(ctx context.Context, ce cloudEventInternal) {
+	_, resourceID, tenantID := classifyEvent(ce)
+	if (resourceID == "" || tenantID == "") && h.customMetrics != nil && h.customMetrics.HasEventType(ce.Type) {
+		var dataMap map[string]interface{}
+		if err := json.Unmarshal(ce.Data, &dataMap); err == nil {
+			_, resourceID, tenantID = h.customMetrics.ClassifyEvent(ce.Type, dataMap)
+		}
+	}
+	payload, err := json.Marshal(ce)
+	if err != nil {
+		h.logger.Error("failed to marshal event for Kafka", "event_id", ce.ID, "error", err)
+		return
+	}
+	h.kafkaPublisher.PublishEvent(ctx, ce.Type, resourceID, tenantID, payload)
 }
 
 func cloudEventDigest(ce cloudEventInternal) (string, error) {
@@ -441,6 +472,11 @@ func (h *APIHandler) validateCloudEvent(ce cloudEventInternal) error {
 	if age < -maxEventFuture {
 		metrics.EventsRejectedTotal.WithLabelValues("timestamp_too_future").Inc()
 		return &eventValidationError{message: fmt.Sprintf("event time is too far in the future (%s; max %s)", (-age).Round(time.Second), maxEventFuture)}
+	}
+	if age > warnEventDrift {
+		metrics.EventsTimestampDriftTotal.WithLabelValues("past").Inc()
+	} else if age < -warnEventDrift {
+		metrics.EventsTimestampDriftTotal.WithLabelValues("future").Inc()
 	}
 
 	resourceType, resourceID, tenantID := classifyEvent(ce)
