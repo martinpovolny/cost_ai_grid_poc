@@ -316,7 +316,7 @@ func (h *APIHandler) IngestEvent(w http.ResponseWriter, r *http.Request) {
 		writeEventError(w, err)
 		return
 	}
-	if err := h.processEvents(r.Context(), []cloudEventInternal{ce}); err != nil {
+	if err := h.processEventsWithPublish(r.Context(), []cloudEventInternal{ce}, true); err != nil {
 		writeEventError(w, err)
 		return
 	}
@@ -338,7 +338,7 @@ func (h *APIHandler) IngestEventBatch(w http.ResponseWriter, r *http.Request) {
 		writeEventError(w, &eventValidationError{message: fmt.Sprintf("events must contain between 1 and %d items", maxBatchEvents)})
 		return
 	}
-	if err := h.processEvents(r.Context(), batch.Events); err != nil {
+	if err := h.processEventsWithPublish(r.Context(), batch.Events, false); err != nil {
 		writeEventError(w, err)
 		return
 	}
@@ -372,10 +372,6 @@ func writeEventError(w http.ResponseWriter, err error) {
 	default:
 		writeErrorJSON(w, "failed to process events", http.StatusInternalServerError)
 	}
-}
-
-func (h *APIHandler) processEvents(ctx context.Context, events []cloudEventInternal) error {
-	return h.processEventsWithPublish(ctx, events, true)
 }
 
 func (h *APIHandler) processEventsWithPublish(ctx context.Context, events []cloudEventInternal, publish bool) error {
