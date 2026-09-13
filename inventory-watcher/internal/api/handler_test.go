@@ -33,6 +33,13 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	// Lets unit-only checks exercise validation and canonicalization without a
+	// PostgreSQL fixture. Database-backed HTTP tests continue to require the
+	// normal TEST_DB_URL setup.
+	if os.Getenv("TEST_SKIP_DB") == "1" {
+		os.Exit(m.Run())
+	}
+
 	dbURL := os.Getenv("TEST_DB_URL")
 	if dbURL == "" {
 		dbURL = "postgres://user:pass@localhost:5434/costdb_test"
@@ -126,7 +133,7 @@ func TestIngestMaaSEvent(t *testing.T) {
 			"tokens_in":        25000,
 			"tokens_out":       12000,
 			"requests":         42,
-			"duration_seconds":  60,
+			"duration_seconds": 60,
 		},
 	}
 
@@ -468,7 +475,7 @@ func TestQuotaStatusWithConsumption(t *testing.T) {
 			"tokens_in":        5000,
 			"tokens_out":       1000,
 			"requests":         10,
-			"duration_seconds":  60,
+			"duration_seconds": 60,
 		},
 	}
 	body, _ := json.Marshal(event)
@@ -993,7 +1000,7 @@ func TestIngestCustomMetricEvent(t *testing.T) {
 		"time":        time.Now().UTC().Format(time.RFC3339),
 		"data": map[string]interface{}{
 			"instance_id":            resourceID,
-			"tenant_id":             "tenant-acme",
+			"tenant_id":              "tenant-acme",
 			"gpu_memory_gib_seconds": 245760.0,
 			"gpu_compute_seconds":    3600.0,
 			"duration_seconds":       3600,
@@ -1112,11 +1119,11 @@ func TestIngestNegativeDurationRejected(t *testing.T) {
 			eventType: "osac.compute_instance.lifecycle",
 			data: map[string]interface{}{
 				"duration_seconds": -3600,
-				"tenant_id":       "evil-tenant",
-				"instance_id":     fmt.Sprintf("neg-vm-%d", time.Now().UnixNano()),
-				"state":           "COMPUTE_INSTANCE_STATE_RUNNING",
-				"cores":           4,
-				"memory_gib":      16,
+				"tenant_id":        "evil-tenant",
+				"instance_id":      fmt.Sprintf("neg-vm-%d", time.Now().UnixNano()),
+				"state":            "COMPUTE_INSTANCE_STATE_RUNNING",
+				"cores":            4,
+				"memory_gib":       16,
 			},
 		},
 		{
@@ -1124,11 +1131,11 @@ func TestIngestNegativeDurationRejected(t *testing.T) {
 			eventType: "osac.compute_instance.lifecycle",
 			data: map[string]interface{}{
 				"duration_seconds": 0,
-				"tenant_id":       "evil-tenant",
-				"instance_id":     fmt.Sprintf("zero-vm-%d", time.Now().UnixNano()),
-				"state":           "COMPUTE_INSTANCE_STATE_RUNNING",
-				"cores":           4,
-				"memory_gib":      16,
+				"tenant_id":        "evil-tenant",
+				"instance_id":      fmt.Sprintf("zero-vm-%d", time.Now().UnixNano()),
+				"state":            "COMPUTE_INSTANCE_STATE_RUNNING",
+				"cores":            4,
+				"memory_gib":       16,
 			},
 		},
 		{
@@ -1136,10 +1143,10 @@ func TestIngestNegativeDurationRejected(t *testing.T) {
 			eventType: "osac.cluster.lifecycle",
 			data: map[string]interface{}{
 				"duration_seconds": -86400,
-				"tenant_id":       "evil-tenant",
-				"cluster_id":      fmt.Sprintf("neg-cl-%d", time.Now().UnixNano()),
-				"host_type":       "_control_plane",
-				"state":           "CLUSTER_STATE_READY",
+				"tenant_id":        "evil-tenant",
+				"cluster_id":       fmt.Sprintf("neg-cl-%d", time.Now().UnixNano()),
+				"host_type":        "_control_plane",
+				"state":            "CLUSTER_STATE_READY",
 			},
 		},
 		{
@@ -1147,12 +1154,12 @@ func TestIngestNegativeDurationRejected(t *testing.T) {
 			eventType: "osac.model.lifecycle",
 			data: map[string]interface{}{
 				"duration_seconds": -60,
-				"tenant_id":       "evil-tenant",
-				"model_id":        fmt.Sprintf("neg-model-%d", time.Now().UnixNano()),
-				"model_name":      "bad-model",
-				"state":           "MODEL_STATE_RUNNING",
-				"tokens_in":       100,
-				"tokens_out":      50,
+				"tenant_id":        "evil-tenant",
+				"model_id":         fmt.Sprintf("neg-model-%d", time.Now().UnixNano()),
+				"model_name":       "bad-model",
+				"state":            "MODEL_STATE_RUNNING",
+				"tokens_in":        100,
+				"tokens_out":       50,
 			},
 		},
 	}
@@ -1488,7 +1495,7 @@ func TestMaaSUserIDPropagation(t *testing.T) {
 			"tokens_in":        100,
 			"tokens_out":       50,
 			"requests":         1,
-			"duration_seconds":  30,
+			"duration_seconds": 30,
 		},
 	}
 
@@ -2223,5 +2230,143 @@ func TestProcessKafkaEvent_OSACv1ResourceDeleted(t *testing.T) {
 	}
 	if ci.State != "DELETING" {
 		t.Errorf("state after delete: got %q, want DELETING", ci.State)
+	}
+}
+
+// osacV1BatchEvent creates a canonical structured CloudEvent as emitted by
+// OSAC metering-service. Keep this fixture at the HTTP boundary so the batch
+// API cannot silently drift from the Kafka processor's accepted envelope.
+func osacV1BatchEvent(id, source, eventType, resourceType, resourceID, tenantID string) map[string]interface{} {
+	return map[string]interface{}{
+		"specversion":      "1.0",
+		"id":               id,
+		"source":           source,
+		"type":             eventType,
+		"time":             time.Now().UTC().Format(time.RFC3339Nano),
+		"datacontenttype":  "application/json",
+		"osacresourceid":   resourceID,
+		"osacresourcetype": resourceType,
+		"osactenant":       tenantID,
+		"data": map[string]interface{}{
+			"resource_id":        resourceID,
+			"resource_type":      resourceType,
+			"tenant_id":          tenantID,
+			"current_state":      "RUNNING",
+			"transition_time":    time.Now().UTC().Format(time.RFC3339Nano),
+			"billing_dimensions": map[string]interface{}{"instance_type": "standard-4-8"},
+			"schema_version":     "v1",
+		},
+	}
+}
+
+func postBatch(t *testing.T, events []map[string]interface{}) *http.Response {
+	t.Helper()
+	body, err := json.Marshal(map[string]interface{}{"events": events})
+	if err != nil {
+		t.Fatalf("marshal batch: %v", err)
+	}
+	resp, err := http.Post(testServer.URL+"/api/v1/events/batch", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post batch: %v", err)
+	}
+	return resp
+}
+
+func TestIngestEventBatchPersistsOSACv1EventsAndExactReplayIsNoOp(t *testing.T) {
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	events := []map[string]interface{}{
+		osacV1BatchEvent("batch-vm-"+suffix, "osac-metering", "osac.resource.created.v1", "compute_instance", "vm-"+suffix, "tenant-"+suffix),
+		osacV1BatchEvent("batch-cluster-"+suffix, "osac-metering", "osac.resource.created.v1", "cluster_order", "cluster-"+suffix, "tenant-"+suffix),
+		osacV1BatchEvent("batch-maas-"+suffix, "osac-metering", "osac.inference.usage.v1", "maas_inference", "model-"+suffix, "tenant-"+suffix),
+	}
+	events[2]["data"].(map[string]interface{})["billing_dimensions"] = map[string]interface{}{
+		"model": "llama-3", "prompt_tokens": 10, "completion_tokens": 5,
+	}
+
+	resp := postBatch(t, events)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("first batch: want 204, got %d: %s", resp.StatusCode, body)
+	}
+
+	var rawCount, receiptCount int
+	if err := testStore.Pool().QueryRow(ctx, "SELECT count(*) FROM raw_events WHERE event_id LIKE $1", "batch-%"+suffix).Scan(&rawCount); err != nil {
+		t.Fatalf("count raw events: %v", err)
+	}
+	if err := testStore.Pool().QueryRow(ctx, "SELECT count(*) FROM ingestion_receipts WHERE event_id LIKE $1", "batch-%"+suffix).Scan(&receiptCount); err != nil {
+		t.Fatalf("count receipts: %v", err)
+	}
+	if rawCount != 3 || receiptCount != 3 {
+		t.Fatalf("first batch: raw=%d receipts=%d, want 3 each", rawCount, receiptCount)
+	}
+
+	replay := postBatch(t, events)
+	defer replay.Body.Close()
+	if replay.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(replay.Body)
+		t.Fatalf("exact replay: want 204, got %d: %s", replay.StatusCode, body)
+	}
+	if err := testStore.Pool().QueryRow(ctx, "SELECT count(*) FROM raw_events WHERE event_id LIKE $1", "batch-%"+suffix).Scan(&rawCount); err != nil {
+		t.Fatalf("count raw events after replay: %v", err)
+	}
+	if rawCount != 3 {
+		t.Fatalf("exact replay added raw events: got %d, want 3", rawCount)
+	}
+}
+
+func TestIngestEventBatchCollisionRollsBackAllMembers(t *testing.T) {
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	existing := osacV1BatchEvent("batch-collision-"+suffix, "osac-metering", "osac.resource.created.v1", "compute_instance", "vm-"+suffix, "tenant-"+suffix)
+	resp := postBatch(t, []map[string]interface{}{existing})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("seed batch: want 204, got %d", resp.StatusCode)
+	}
+
+	newMember := osacV1BatchEvent("batch-must-rollback-"+suffix, "osac-metering", "osac.resource.created.v1", "compute_instance", "rollback-"+suffix, "tenant-"+suffix)
+	collision := osacV1BatchEvent("batch-collision-"+suffix, "osac-metering", "osac.resource.created.v1", "compute_instance", "changed-"+suffix, "tenant-"+suffix)
+	resp = postBatch(t, []map[string]interface{}{newMember, collision})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("collision batch: want 409, got %d: %s", resp.StatusCode, body)
+	}
+
+	var rawCount, receiptCount int
+	if err := testStore.Pool().QueryRow(ctx, "SELECT count(*) FROM raw_events WHERE event_id = $1", newMember["id"]).Scan(&rawCount); err != nil {
+		t.Fatalf("count rolled back raw event: %v", err)
+	}
+	if err := testStore.Pool().QueryRow(ctx, "SELECT count(*) FROM ingestion_receipts WHERE event_id = $1", newMember["id"]).Scan(&receiptCount); err != nil {
+		t.Fatalf("count rolled back receipt: %v", err)
+	}
+	if rawCount != 0 || receiptCount != 0 {
+		t.Fatalf("collision wrote earlier member: raw=%d receipts=%d", rawCount, receiptCount)
+	}
+}
+
+func TestIngestEventBatchMalformedMemberRollsBackAllMembers(t *testing.T) {
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	valid := osacV1BatchEvent("batch-malformed-"+suffix, "osac-metering", "osac.resource.created.v1", "compute_instance", "vm-"+suffix, "tenant-"+suffix)
+	malformed := map[string]interface{}{"specversion": "1.0", "source": "osac-metering", "type": "osac.resource.created.v1", "time": time.Now().UTC().Format(time.RFC3339)}
+	resp := postBatch(t, []map[string]interface{}{valid, malformed})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("malformed batch: want 400, got %d: %s", resp.StatusCode, body)
+	}
+
+	var rawCount, receiptCount int
+	if err := testStore.Pool().QueryRow(ctx, "SELECT count(*) FROM raw_events WHERE event_id = $1", valid["id"]).Scan(&rawCount); err != nil {
+		t.Fatalf("count raw: %v", err)
+	}
+	if err := testStore.Pool().QueryRow(ctx, "SELECT count(*) FROM ingestion_receipts WHERE event_id = $1", valid["id"]).Scan(&receiptCount); err != nil {
+		t.Fatalf("count receipt: %v", err)
+	}
+	if rawCount != 0 || receiptCount != 0 {
+		t.Fatalf("malformed batch wrote valid member: raw=%d receipts=%d", rawCount, receiptCount)
 	}
 }

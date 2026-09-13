@@ -146,9 +146,9 @@ paths:
         **Body size limit:** 1 MB.
 
 
-        **Deduplication:** Events are deduplicated by their `id` field.
-        Re-submitting an event with the same ID returns 409 Conflict
-        (idempotent).
+        **Deduplication:** Events are deduplicated by their `(source, id)`
+        identity in the durable receipt ledger. An exact replay is a 204
+        no-op; reuse of that identity with different content returns 409.
       requestBody:
         required: true
         content:
@@ -213,6 +213,53 @@ paths:
                 status: duplicate
         "500":
           description: Database or processing error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/events/batch:
+    post:
+      operationId: ingestEventBatch
+      tags: [Events]
+      summary: Atomically ingest a batch of canonical OSAC CloudEvents
+      description: >-
+        Cost Management adapter delivery endpoint. Accepts one to 100
+        CloudEvents 1.0 structured-mode envelopes, with a total request
+        limit of 1 MiB. Every event is validated before database work starts.
+        Receipt claims, raw-event records, inventory updates, and
+        event-driven metering are one transaction: an invalid member,
+        identity collision, or processing failure leaves no member persisted.
+
+
+        The durable receipt identity is `(source, id)` plus a SHA-256 digest
+        of the structured CloudEvent. An exact replay is a successful 204
+        no-op. Reusing an identity for different content returns 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloudEventBatch"
+      responses:
+        "204":
+          description: Every new event was durably processed; exact replays are no-ops.
+        "400":
+          description: Invalid batch, malformed CloudEvent, or unsupported event identity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: An existing `(source, id)` has different event content; no member was written.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: Request body exceeds 1 MiB.
+        "500":
+          description: Database or processing error; all members rolled back.
           content:
             application/json:
               schema:
@@ -1393,7 +1440,7 @@ components:
         payload shape depends on the `type` field. The `subject`
         field serves as a fallback tenant ID when the data payload
         does not contain a tenant identifier.
-      required: [specversion, type, source, id]
+      required: [specversion, type, source, id, time, data]
       properties:
         specversion:
           type: string
@@ -1442,6 +1489,17 @@ components:
             - $ref: "#/components/schemas/ComputeInstanceEventData"
             - $ref: "#/components/schemas/ClusterEventData"
             - $ref: "#/components/schemas/MaaSEventData"
+
+    CloudEventBatch:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/CloudEvent"
 
     ComputeInstanceEventData:
       type: object

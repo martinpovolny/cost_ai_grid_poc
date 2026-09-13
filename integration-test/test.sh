@@ -95,12 +95,44 @@ EVENT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/v1/even
     }")
 check_output "event accepted" "204" echo "$EVENT_STATUS"
 
-# ── 5. Wait for metering + rating sweeps ──
+# ── 5. Verify atomic adapter batch ingress and receipt replay ──
+echo ""
+echo "--- OSAC adapter batch ingest ---"
+BATCH_ID="ci-osac-batch-$(date +%s)"
+BATCH_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+BATCH_BODY="{
+  \"events\": [
+    {
+      \"specversion\": \"1.0\", \"id\": \"${BATCH_ID}\", \"source\": \"osac-metering\",
+      \"type\": \"osac.resource.created.v1\", \"time\": \"${BATCH_TIME}\",
+      \"osacresourceid\": \"ci-batch-vm\", \"osacresourcetype\": \"compute_instance\", \"osactenant\": \"tenant-ci\",
+      \"data\": {
+        \"resource_id\": \"ci-batch-vm\", \"resource_type\": \"compute_instance\", \"tenant_id\": \"tenant-ci\",
+        \"current_state\": \"RUNNING\", \"transition_time\": \"${BATCH_TIME}\",
+        \"billing_dimensions\": {\"instance_type\": \"ci-test-2-8\"}, \"schema_version\": \"v1\"
+      }
+    }
+  ]
+}"
+BATCH_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/v1/events/batch" \
+  -H "Content-Type: application/json" -d "$BATCH_BODY")
+check_output "OSAC batch accepted" "204" echo "$BATCH_STATUS"
+
+REPLAY_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/v1/events/batch" \
+  -H "Content-Type: application/json" -d "$BATCH_BODY")
+check_output "exact batch replay is a no-op" "204" echo "$REPLAY_STATUS"
+
+COLLISION_BODY="${BATCH_BODY//ci-batch-vm/ci-batch-vm-changed}"
+COLLISION_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/v1/events/batch" \
+  -H "Content-Type: application/json" -d "$COLLISION_BODY")
+check_output "identity collision rejected" "409" echo "$COLLISION_STATUS"
+
+# ── 6. Wait for metering + rating sweeps ──
 echo ""
 echo "--- Waiting for metering (60s) + rating (30s) sweeps ---"
 sleep 95
 
-# ── 6. Verify pipeline output ──
+# ── 7. Verify pipeline output ──
 echo ""
 echo "--- Pipeline verification ---"
 

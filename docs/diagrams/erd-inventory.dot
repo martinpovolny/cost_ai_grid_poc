@@ -41,6 +41,16 @@ digraph erd_inventory {
         </TABLE>
     >]
 
+    ingestion_receipts [label=<
+        <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#FFF3E0">
+            <TR><TD COLSPAN="3" BGCOLOR="#FB8C00"><FONT COLOR="white"><B>ingestion_receipts</B></FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><B>event_source</B></TD><TD>TEXT</TD><TD>PK</TD></TR>
+            <TR><TD ALIGN="LEFT"><B>event_id</B></TD><TD>TEXT</TD><TD>PK</TD></TR>
+            <TR><TD ALIGN="LEFT">payload_sha256</TD><TD>TEXT</TD><TD></TD></TR>
+            <TR><TD ALIGN="LEFT">received_at</TD><TD>TIMESTAMPTZ</TD><TD></TD></TR>
+        </TABLE>
+    >]
+
     inventory_tenant [label=<
         <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#E8F5E9">
             <TR><TD COLSPAN="3" BGCOLOR="#4CAF50"><FONT COLOR="white"><B>inventory_tenant</B></FONT></TD></TR>
@@ -171,6 +181,7 @@ digraph erd_inventory {
     inventory_cluster -> inventory_compute_instance [label="cluster_id" style=dashed]
     inventory_project -> inventory_compute_instance [label="project" style=dashed]
     inventory_project -> inventory_model [label="project" style=dashed]
+    ingestion_receipts -> raw_events [label="accepted delivery" style=dotted color="#999999"]
     raw_events -> inventory_compute_instance [label="upsert on\nevent" style=dotted color="#999999"]
     raw_events -> inventory_cluster [label="upsert on\nevent" style=dotted color="#999999"]
     raw_events -> inventory_model [label="upsert on\nevent" style=dotted color="#999999"]
