@@ -128,7 +128,7 @@ check "HTTP ingest accepted" "204" "$HTTP_STATUS"
 sleep 2
 
 timeout 5 $RPK topic consume osac.metering.inference -o start -n 1 -f '%v\n' > /tmp/kafka-inference-out.txt 2>/dev/null || true
-KAFKA_COUNT=$(grep -c "$EVENT_ID" /tmp/kafka-inference-out.txt 2>/dev/null || echo "0")
+KAFKA_COUNT=$(grep -c "$EVENT_ID" /tmp/kafka-inference-out.txt 2>/dev/null || true)
 check "HTTP event absent from Kafka inference topic" "0" "$KAFKA_COUNT"
 
 kill $PRODUCER_PID 2>/dev/null; wait $PRODUCER_PID 2>/dev/null || true
